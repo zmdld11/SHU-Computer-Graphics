@@ -5,19 +5,24 @@
 
 namespace cg::raster {
 
-// 实验一（#2）实现：所有算法手写，最终只调 FrameBuffer::putPixel。
-// 接口为初稿，实验实现时可调整，调整理由写进 issue。
+// 线型线宽属性：mask 为 16 位像素掩码（bit=1 才落点），width 为方形刷子边长（奇数）
+struct LineStyle {
+    unsigned mask = 0xFFFFu;
+    int width = 1;
+};
 
-// 直线：Bresenham 算法，支持任意斜率
-void drawLine(FrameBuffer& fb, IPoint a, IPoint b, const Color& color);
+// 直线：Bresenham 算法，任意斜率（|m|>1 时切换驱动轴，方向由端点差决定，全整数运算）
+void drawLine(FrameBuffer& fb, IPoint a, IPoint b, const Color& color,
+              const LineStyle& style = {});
 
-// 圆/圆弧：中点算法（八分对称）
-void drawCircle(FrameBuffer& fb, IPoint center, int radius, const Color& color);
+// 圆：中点算法（判别式 d=1-R 起步），八分对称
+void drawCircle(FrameBuffer& fb, IPoint center, int radius, const Color& color,
+                const LineStyle& style = {});
 
-// 线型控制：像素掩码（如 0xFFFF 实线、0xFF00 虚线），对后续画线生效
-void setLineMask(unsigned mask);
-
-// 线宽控制：像素重复法或刷子法
-void setLineWidth(int width);
+// 圆弧：中点算法 + 逐点角度过滤。角度为屏幕坐标（0°=正右，y 向下故顺时针为正），
+// 画从 startDeg 顺时针到 endDeg 的弧；endDeg<=startDeg 视为补一圈。
+// 对应实验一挑战问题：指定起止角的圆弧段
+void drawArc(FrameBuffer& fb, IPoint center, int radius, float startDeg, float endDeg,
+             const Color& color, const LineStyle& style = {});
 
 } // namespace cg::raster

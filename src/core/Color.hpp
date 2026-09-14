@@ -18,6 +18,12 @@ struct Color {
     static constexpr Color Green() { return {0, 255, 0}; }
     static constexpr Color Blue()  { return {0, 0, 255}; }
     static constexpr Color Yellow(){ return {255, 255, 0}; }
+    static constexpr Color Gray()  { return {128, 128, 128}; }
+
+    constexpr bool operator==(const Color& o) const {
+        return r == o.r && g == o.g && b == o.b;
+    }
+    constexpr bool operator!=(const Color& o) const { return !(*this == o); }
 };
 
 } // namespace cg

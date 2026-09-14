@@ -28,7 +28,9 @@ add_executable(cg-engine
     src/main.cpp
     src/core/FrameBuffer.cpp
     src/core/Canvas.cpp
+    src/raster/Rasterizer.cpp
     src/ui/Window.cpp
+    src/ui/PaintController.cpp
     third_party/glad/src/gl.c
 )
 
