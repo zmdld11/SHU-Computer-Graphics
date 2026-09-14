@@ -1,0 +1,56 @@
+# ===== 构建产物 =====
+build/
+build-*/
+out/
+cmake-build-*/
+[Cc]MakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+install_manifest.txt
+compile_commands.json
+.cache/
+
+# ===== Visual Studio =====
+.vs/
+.vscode/
+x64/
+x86/
+[Dd]ebug/
+[Rr]elease/
+[Ww]in32/
+[Ww]in64/
+*.sln
+*.vcxproj*
+*.user
+*.aps
+*.obj
+*.lib
+*.pdb
+*.exe
+*.dll
+*.ilk
+
+# ===== CLion / JetBrains =====
+.idea/
+*.iml
+
+# ===== MinGW / GCC =====
+*.o
+*.a
+*.so
+*.dylib
+*.d
+*.exe.manifest
+
+# ===== 依赖拉取目录（FetchContent）=====
+_deps/
+
+# ===== 系统 =====
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ===== 临时 =====
+*.log
+*.tmp
+~$*
