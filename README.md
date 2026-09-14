@@ -67,3 +67,4 @@ cg-labs/
 ## 协作规范
 
 见 [CONTRIBUTING.md](CONTRIBUTING.md) —— 修改一律先建 GitHub issue，一个修改计划一个 issue。
+组员使用 AI 编程助手协作时，助手会自动读取 [AGENTS.md](AGENTS.md) 的工作指引。
