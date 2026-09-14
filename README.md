@@ -51,7 +51,7 @@ cmake --build build
 SHU-Computer-Graphics/
 ├── AGENTS.md          # 组员 AI 助手工作指引（AI 编程工具自动读取）
 ├── CONTRIBUTING.md    # 协作规范：issue 驱动工作流
-├── docs/              # 实验要求摘要
+├── docs/              # 实验要求摘要、架构设计（类图与依赖）
 ├── src/
 │   ├── core/          # FrameBuffer（putPixel 唯一画点入口）、Canvas 上屏
 │   ├── raster/        # 图元生成算法：直线/圆/圆弧已实现（实验一）；填充/裁剪待做（实验二）
