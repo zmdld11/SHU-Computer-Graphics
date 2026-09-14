@@ -8,15 +8,15 @@
 
 | 项 | 选择 | 说明 |
 |---|---|---|
-| 语言 | C++17/20 | |
+| 语言 | C++17 | |
 | 构建 | CMake ≥ 3.20 | 一份 `CMakeLists.txt`，所有 IDE/命令行通用 |
 | 图形库 | OpenGL 3.3 + GLFW + GLAD | GLFW 仅作"显示画布"，**所有光栅化算法手写**（Bresenham 等），符合实验考察点 |
-| 依赖管理 | CMake FetchContent | 队友克隆即用，无需手动装库 |
+| 依赖管理 | FetchContent(GLFW) + 入库(glad) | GLFW 首次构建联网自动拉取；glad 源码已在 `third_party/`，无 Python 依赖 |
 
-## 构建方式（任选其一）
+## 构建与运行
 
 ```bash
-# 方式一：命令行
+# 方式一：命令行（首次会联网下载 GLFW）
 cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build
 
@@ -24,29 +24,52 @@ cmake --build build
 # 方式三：Visual Studio —— 文件→打开→CMake，选择本目录
 ```
 
+```bash
+./build/cg-engine            # 交互绘图（Windows 下为 build/cg-engine.exe）
+./build/cg-engine --smoke    # 无窗口算法自测（11 项断言，退出码 0 = 通过）
+```
+
 > Windows 工具链：MSVC (VS2022) 或 MinGW 皆可。
 
-## 目录结构（骨架建立后生效）
+### 操作说明（实验一）
+
+| 输入 | 功能 |
+|---|---|
+| `1` / `2` / `3` | 切换 直线 / 圆 / 圆弧 模式 |
+| 左键拖拽 | 画线、画圆（实时预览）；圆弧模式下定圆心、半径、起始角 |
+| 移动鼠标 + 左键 | 圆弧第二阶段：预览终止角，左键确认 |
+| `S` | 线型：实线 / 虚线 / 点线 |
+| `W` | 线宽：1 / 3 / 5（方形刷子） |
+| `E` / 右键 | 清屏 / 取消当前操作 |
+| `ESC` | 退出 |
+
+当前模式与属性实时显示在窗口标题栏。
+
+## 目录结构
 
 ```
-cg-labs/
-├── docs/          # 实验要求摘要、设计文档
+SHU-Computer-Graphics/
+├── AGENTS.md          # 组员 AI 助手工作指引（AI 编程工具自动读取）
+├── CONTRIBUTING.md    # 协作规范：issue 驱动工作流
+├── docs/              # 实验要求摘要
 ├── src/
-│   ├── core/      # framebuffer、画布、图元基类（底层，与 UI 低耦合）
-│   ├── raster/    # 图元生成：直线/圆弧/填充/裁剪算法（实验一、二）
-│   ├── geom/      # 变换：矩阵、复合变换（实验三）
-│   ├── curves/    # Bezier / de Casteljau（实验四）
-│   ├── ui/        # 鼠标键盘交互、界面层（调 core 接口，不写算法）
+│   ├── core/          # FrameBuffer（putPixel 唯一画点入口）、Canvas 上屏
+│   ├── raster/        # 图元生成算法：直线/圆/圆弧已实现（实验一）；填充/裁剪待做（实验二）
+│   ├── geom/          # 变换矩阵（实验三，接口占位）
+│   ├── curves/        # Bezier / de Casteljau（实验四，接口占位）
+│   ├── ui/            # GLFW 窗口 + PaintController 交互状态机
 │   └── main.cpp
-├── assets/        # 测试模型文件（实验五）
-└── CMakeLists.txt
+└── third_party/
+    └── glad/          # 预生成的 OpenGL 函数加载器源码
 ```
 
-**架构红线**（实验要求原文精神）：算法层不依赖 UI 层；上层动画（期末项目）只调底层接口。开始写代码前先读 `docs/lab1.md` 的架构要求。
+**关于 `third_party/`**：存放不由我们维护、但随仓库一起编译的第三方源码。目前只有 glad——Windows 上 OpenGL 函数地址须运行时获取，glad 负责加载这些函数指针（`Canvas` 是引擎里唯一使用它的地方）。官方用法要求构建时用生成器现生成（每台机器都得装 Python + jinja2），故改为**把生成好的 3 个文件直接入库**，队友克隆即可构建；换 GL 版本的重新生成方法写在 `CMakeLists.txt` 注释里。
+
+**架构红线**：算法层（raster/geom/curves）不依赖 UI 层，绘图只经 `FrameBuffer::putPixel`；期末动画项目只调底层接口。
 
 ## 实验验收清单
 
-- [ ] 实验一：中点/Bresenham 直线（任意斜率）、圆弧中点算法、线型线宽
+- [ ] 实验一：中点/Bresenham 直线（任意斜率）、圆弧中点算法、线型线宽 ——（已实现 #2，待课堂验收）
 - [ ] 实验二：扫描线多边形填充、扫描线种子填充、线段裁剪
 - [ ] 实验三：平移/放缩/旋转，多选图形，重心及任意参考点
 - [ ] 实验四：n 阶 Bezier（de Casteljau）+ 鼠标控制调整
