@@ -32,8 +32,27 @@ void Window::glfwMouseButton(GLFWwindow* window, int button, int action, int mod
 
 void Window::glfwCursorPos(GLFWwindow* window, double x, double y) {
     (void)window;
-    if (s_active != nullptr && s_active->onMouseMove_) {
-        s_active->onMouseMove_(x, y);
+    if (s_active == nullptr || !s_active->onMouseMove_) {
+        return;
+    }
+    // 鼠标坐标从窗口逻辑坐标换算到帧缓冲像素（适配高 DPI 缩放）
+    int fw = 0, fh = 0, ww = 0, wh = 0;
+    glfwGetFramebufferSize(window, &fw, &fh);
+    glfwGetWindowSize(window, &ww, &wh);
+    if (ww <= 0 || wh <= 0) {
+        return;
+    }
+    s_active->onMouseMove_(x * fw / ww, y * fh / wh);
+}
+
+void Window::glfwFramebufferSize(GLFWwindow* window, int width, int height) {
+    (void)window;
+    if (s_active != nullptr) {
+        if (s_active->onResize_) {
+            s_active->onResize_(width, height);
+        }
+        s_active->width_ = width;
+        s_active->height_ = height;
     }
 }
 
@@ -50,7 +69,7 @@ Window::Window(int width, int height, const char* title, bool hidden)
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
-    glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
+    glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
     glfwWindowHint(GLFW_VISIBLE, hidden ? GLFW_FALSE : GLFW_TRUE);
 
     window_ = glfwCreateWindow(width, height, title, nullptr, nullptr);
@@ -59,9 +78,11 @@ Window::Window(int width, int height, const char* title, bool hidden)
         return;
     }
     glfwMakeContextCurrent(window_);
+    glfwSetWindowSizeLimits(window_, 400, 300, GLFW_DONT_CARE, GLFW_DONT_CARE);
     glfwSetKeyCallback(window_, &Window::glfwKey);
     glfwSetMouseButtonCallback(window_, &Window::glfwMouseButton);
     glfwSetCursorPosCallback(window_, &Window::glfwCursorPos);
+    glfwSetFramebufferSizeCallback(window_, &Window::glfwFramebufferSize);
     s_active = this;
 }
 
@@ -100,6 +121,22 @@ void Window::setTitle(const std::string& title) {
 
 LoaderFn Window::loader() const {
     return reinterpret_cast<LoaderFn>(glfwGetProcAddress);
+}
+
+int Window::fbWidth() const {
+    int w = 0, h = 0;
+    if (window_ != nullptr) {
+        glfwGetFramebufferSize(window_, &w, &h);
+    }
+    return w;
+}
+
+int Window::fbHeight() const {
+    int w = 0, h = 0;
+    if (window_ != nullptr) {
+        glfwGetFramebufferSize(window_, &w, &h);
+    }
+    return h;
 }
 
 } // namespace cg
