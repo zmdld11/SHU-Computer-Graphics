@@ -90,6 +90,12 @@ int runAlgorithmSelfChecks() {
     expect(fb.pixel(50, 120) == Color::Black(), "style: 点线第0步不画");
     expect(fb.pixel(53, 120) == W, "style: 点线第3步画");
 
+    // ---- 宽线 × 虚线不粘连：掩码按线宽放大，空档仍在 ----
+    fb.clear(Color::Black());
+    drawLine(fb, {50, 140}, {149, 140}, W, {0xF0F0u, 5});
+    expect(fb.pixel(60, 140) == Color::Black(), "width+dash: 空档仍为空");
+    expect(fb.pixel(75, 140) == W, "width+dash: 实段存在");
+
     return fails;
 }
 
