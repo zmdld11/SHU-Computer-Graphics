@@ -10,7 +10,11 @@ constexpr float kPi = 3.14159265358979f;
 
 // 掩码过滤 + 方形刷子落点：实验一"线型、线宽属性"的统一出口
 void plotPen(FrameBuffer& fb, int x, int y, const Color& c, const LineStyle& s, unsigned step) {
-    if (((s.mask >> (step & 15u)) & 1u) == 0u) {
+    // 线宽>1 时掩码下标按线宽放大（每个掩码位对应 width 个路径像素），
+    // 否则方形刷子两侧外扩 w/2 会把虚线/点线的空档填满（#17）
+    const unsigned idx =
+        (s.width > 1 ? step / static_cast<unsigned>(s.width) : step) & 15u;
+    if (((s.mask >> idx) & 1u) == 0u) {
         return;
     }
     if (s.width <= 1) {
