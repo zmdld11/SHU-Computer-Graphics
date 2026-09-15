@@ -48,7 +48,8 @@ cmake --build build --config Release
 - 注释、issue、commit message 用中文；标识符用英文。
 - 算法实现放 `raster/geom/curves`；想画任何东西最终都走 `FrameBuffer::putPixel`。
 - 占位头文件里的接口是初稿，实验实现时可调整，**调整理由写进对应 issue**。
-- 不引入新第三方库（除 GLFW/GLAD）；不改动 `CMakeLists.txt` 的依赖部分，除非 issue 里说明。
+- **禁引入 Qt / MFC / ImGui / WebView 等任何界面或前端框架**（老师强调算法与前端低耦合）；外部依赖只有 GLFW（窗口事件）与 OpenGL/glad（上屏），见 README 依赖白名单。不改动 `CMakeLists.txt` 的依赖部分，除非 issue 里说明。
+- 每个实验（任务）实现完成并合入 main 后打 tag：`lab1`、`lab2`…（老师要求所有实验在一个程序里，tag 即分任务提交节点）。
 
 ## 安全红线
 
