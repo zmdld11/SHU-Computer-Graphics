@@ -10,6 +10,9 @@ class FrameBuffer {
 public:
     FrameBuffer(int width, int height);
 
+    // 窗口尺寸变化时重设画布（内容清空）
+    void resize(int width, int height);
+
     int width() const  { return width_; }
     int height() const { return height_; }
 

@@ -19,6 +19,9 @@ public:
 
     bool valid() const { return valid_; }
 
+    // 窗口尺寸变化时重建纹理存储
+    void resize(int width, int height);
+
     // 上传像素并绘制全屏四边形，每帧调用一次
     void present(const FrameBuffer& fb);
 

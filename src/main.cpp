@@ -4,6 +4,7 @@
 #include "ui/PaintController.hpp"
 #include "ui/Window.hpp"
 #include <iostream>
+#include <memory>
 #include <string>
 
 namespace {
@@ -124,14 +125,29 @@ int main(int argc, char** argv) {
     }
 
     cg::PaintController ctrl;
+
+    // 画板跟随窗口尺寸：用 unique_ptr 以便 resize 时重建
+    auto fbLive = std::make_unique<cg::FrameBuffer>(window.fbWidth(), window.fbHeight());
+    auto canvasLive =
+        std::make_unique<cg::Canvas>(fbLive->width(), fbLive->height(), window.loader());
+    if (!canvasLive->valid()) {
+        return 1;
+    }
+    cg::FrameBuffer& live = *fbLive;
+    cg::Canvas& liveCanvas = *canvasLive;
+    window.setOnResize([&](int w, int h) {
+        live.resize(w, h);
+        liveCanvas.resize(w, h);
+    });
+
     window.setOnKey([&ctrl](int key, int action) { ctrl.onKey(key, action); });
     window.setOnMouseButton([&ctrl](int button, int action) { ctrl.onMouseButton(button, action); });
     window.setOnMouseMove([&ctrl](double x, double y) { ctrl.onMouseMove({int(x), int(y)}); });
 
     while (!window.shouldClose()) {
-        ctrl.render(fb);
+        ctrl.render(live);
         window.setTitle(ctrl.title());
-        canvas.present(fb);
+        liveCanvas.present(live);
         window.swapBuffers();
         window.pollEvents();
     }

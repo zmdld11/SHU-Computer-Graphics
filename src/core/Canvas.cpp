@@ -108,6 +108,15 @@ Canvas::~Canvas() {
     if (vao_ != 0) glDeleteVertexArrays(1, &vao_);
 }
 
+void Canvas::resize(int width, int height) {
+    if (!valid_) {
+        return;
+    }
+    glBindTexture(GL_TEXTURE_2D, texture_);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+                 nullptr);
+}
+
 void Canvas::present(const FrameBuffer& fb) {
     if (!valid_) {
         return;
