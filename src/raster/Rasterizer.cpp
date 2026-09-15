@@ -1,5 +1,7 @@
 #include "raster/Rasterizer.hpp"
+#include <algorithm>
 #include <cmath>
+#include <vector>
 
 namespace cg::raster {
 namespace {
@@ -33,6 +35,48 @@ float angleOf(int px, int py, int cx, int cy) {
 // start < end（end 可大于 360）
 bool inArcRange(float ang, float start, float end) {
     return (ang >= start && ang <= end) || (ang + 360.0f >= start && ang + 360.0f <= end);
+}
+
+struct CirclePixel {
+    float angle;
+    IPoint p;
+};
+
+// 整圆离散点集：中点算法走 1/8 弧 + 八分对称展开，再按角度升序排序去重。
+// 排序后掩码计数沿圆周连续递增，虚线/点线在圆周上均匀（#13）。
+std::vector<CirclePixel> circlePoints(IPoint center, int radius) {
+    std::vector<CirclePixel> pts;
+    pts.reserve(static_cast<std::size_t>(radius) * 8);
+
+    int x = 0;
+    int y = radius;
+    int d = 1 - radius;
+    while (x <= y) {
+        const int offs[8][2] = {
+            {x, y}, {y, x}, {y, -x}, {x, -y}, {-x, -y}, {-y, -x}, {-y, x}, {-x, y},
+        };
+        for (const auto& off : offs) {
+            const IPoint p{center.x + off[0], center.y + off[1]};
+            pts.push_back({angleOf(p.x, p.y, center.x, center.y), p});
+        }
+        if (d < 0) {
+            d += 2 * x + 3;       // 取正右像素
+        } else {
+            d += 2 * (x - y) + 5; // 取右下像素
+            --y;
+        }
+        ++x;
+    }
+
+    std::sort(pts.begin(), pts.end(),
+              [](const CirclePixel& a, const CirclePixel& b) { return a.angle < b.angle; });
+    // 45° 等对称轴上同一像素会从两个八分段各来一次，排序后相邻，去重
+    pts.erase(std::unique(pts.begin(), pts.end(),
+                          [](const CirclePixel& a, const CirclePixel& b) {
+                              return a.p.x == b.p.x && a.p.y == b.p.y;
+                          }),
+              pts.end());
+    return pts;
 }
 
 } // namespace
@@ -85,30 +129,9 @@ void drawCircle(FrameBuffer& fb, IPoint center, int radius, const Color& color,
         plotPen(fb, center.x, center.y, color, style, 0);
         return;
     }
-
-    int x = 0;
-    int y = radius;
-    int d = 1 - radius; // 中点判别式
     unsigned step = 0;
-
-    while (x <= y) {
-        // 八分对称：由 (x,y) 生成圆上 8 点
-        plotPen(fb, center.x + x, center.y + y, color, style, step++);
-        plotPen(fb, center.x + y, center.y + x, color, style, step++);
-        plotPen(fb, center.x + y, center.y - x, color, style, step++);
-        plotPen(fb, center.x + x, center.y - y, color, style, step++);
-        plotPen(fb, center.x - x, center.y - y, color, style, step++);
-        plotPen(fb, center.x - y, center.y - x, color, style, step++);
-        plotPen(fb, center.x - y, center.y + x, color, style, step++);
-        plotPen(fb, center.x - x, center.y + y, color, style, step++);
-
-        if (d < 0) {
-            d += 2 * x + 3;       // 取正右像素
-        } else {
-            d += 2 * (x - y) + 5; // 取右下像素
-            --y;
-        }
-        ++x;
+    for (const auto& cp : circlePoints(center, radius)) {
+        plotPen(fb, cp.p.x, cp.p.y, color, style, step++);
     }
 }
 
@@ -125,29 +148,11 @@ void drawArc(FrameBuffer& fb, IPoint center, int radius, float startDeg, float e
     if (e < 0.0f) e += 360.0f;
     if (e <= s) e += 360.0f;
 
-    int x = 0;
-    int y = radius;
-    int d = 1 - radius;
-    unsigned step = 0; // 只对画出的像素递增，虚线沿弧连续
-
-    while (x <= y) {
-        const int offs[8][2] = {
-            {x, y}, {y, x}, {y, -x}, {x, -y}, {-x, -y}, {-y, -x}, {-y, x}, {-x, y},
-        };
-        for (const auto& off : offs) {
-            const int px = center.x + off[0];
-            const int py = center.y + off[1];
-            if (inArcRange(angleOf(px, py, center.x, center.y), s, e)) {
-                plotPen(fb, px, py, color, style, step++);
-            }
+    unsigned step = 0; // 只对画出的像素递增，虚线沿弧线连续
+    for (const auto& cp : circlePoints(center, radius)) {
+        if (inArcRange(cp.angle, s, e)) {
+            plotPen(fb, cp.p.x, cp.p.y, color, style, step++);
         }
-        if (d < 0) {
-            d += 2 * x + 3;
-        } else {
-            d += 2 * (x - y) + 5;
-            --y;
-        }
-        ++x;
     }
 }
 
