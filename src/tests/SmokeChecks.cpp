@@ -7,7 +7,9 @@
 #include "raster/Clip.hpp"
 #include "raster/Fill.hpp"
 #include "raster/Rasterizer.hpp"
+#include "ui/PaintController.hpp"
 
+#include <GLFW/glfw3.h>
 #include <cmath>
 #include <cstdlib>
 #include <fstream>
@@ -247,6 +249,69 @@ int runAlgorithmSelfChecks() {
     expect(cyrusBeck(p, q, triWin) && nearPoint({(int)p.x, (int)p.y}, {380, 200}, 1) &&
                nearPoint({(int)q.x, (int)q.y}, {420, 220}, 1),
            "cyrus-beck: 完全在窗口内不变");
+
+    // ================= 交互状态机（无窗口模拟：事件 → 像素）=================
+    {
+        PaintController ctrl;
+        FrameBuffer canvas(kWidth, kHeight);
+
+        // 模式 4：连点四个顶点 + 右键闭合 → 多边形填充
+        ctrl.onKey(GLFW_KEY_4, GLFW_PRESS);
+        const IPoint quad[4] = {{100, 100}, {300, 100}, {300, 250}, {100, 250}};
+        for (const auto& pt : quad) {
+            ctrl.onMouseMove(pt);
+            ctrl.onMouseButton(0, GLFW_PRESS);
+            ctrl.onMouseButton(0, GLFW_RELEASE);
+        }
+        ctrl.onMouseMove({500, 500});
+        ctrl.onMouseButton(1, GLFW_PRESS); // 右键闭合
+        ctrl.render(canvas);
+        expect(canvas.pixel(200, 180) != Color::Black(), "ui: 多边形连点+右键闭合后填充");
+        expect(canvas.pixel(500, 400) == Color::Black(), "ui: 多边形外仍是背景");
+
+        // 模式 2 画圆 → 模式 5 点圆心做种子填充
+        ctrl.onKey(GLFW_KEY_E, GLFW_PRESS); // 清屏
+        ctrl.onKey(GLFW_KEY_2, GLFW_PRESS);
+        ctrl.onMouseMove({400, 300});
+        ctrl.onMouseButton(0, GLFW_PRESS);
+        ctrl.onMouseMove({500, 300}); // 半径 100
+        ctrl.onMouseButton(0, GLFW_RELEASE);
+        ctrl.onKey(GLFW_KEY_5, GLFW_PRESS);
+        ctrl.onMouseMove({400, 300});
+        ctrl.onMouseButton(0, GLFW_PRESS);
+        ctrl.onMouseButton(0, GLFW_RELEASE);
+        ctrl.render(canvas);
+        expect(canvas.pixel(400, 260) != Color::Black(), "ui: 圆内种子填充");
+        expect(canvas.pixel(150, 300) == Color::Black(), "ui: 圆外未被填充（不泄漏）");
+
+        // 模式 6：拖拽画线 → 默认矩形窗口裁剪（窗口外灰虚线，窗口内绿色）
+        ctrl.onKey(GLFW_KEY_E, GLFW_PRESS);
+        ctrl.onKey(GLFW_KEY_6, GLFW_PRESS);
+        ctrl.onMouseMove({100, 300});
+        ctrl.onMouseButton(0, GLFW_PRESS);
+        ctrl.onMouseMove({700, 300});
+        ctrl.onMouseButton(0, GLFW_RELEASE);
+        ctrl.render(canvas);
+        expect(canvas.pixel(400, 300) == Color::Green(), "ui: 裁剪结果在窗口内为绿色");
+        // 原线段是"灰色虚线"，某一点可能正落在空档上，所以按区间检查存在性
+        auto hasGrayInRow = [&](int y, int x0, int x1) {
+            for (int x = x0; x <= x1; ++x) {
+                if (canvas.pixel(x, y) == Color::Gray()) {
+                    return true;
+                }
+            }
+            return false;
+        };
+        expect(hasGrayInRow(300, 100, 159), "ui: 窗口外左侧原线段为灰色虚线");
+        expect(hasGrayInRow(300, 641, 700), "ui: 窗口外右侧原线段为灰色虚线");
+
+        // 线型/线宽/填充色切换不改变已提交内容（只影响后续图形）
+        ctrl.onKey(GLFW_KEY_S, GLFW_PRESS);
+        ctrl.onKey(GLFW_KEY_W, GLFW_PRESS);
+        ctrl.onKey(GLFW_KEY_X, GLFW_PRESS);
+        ctrl.render(canvas);
+        expect(canvas.pixel(400, 300) == Color::Green(), "ui: 属性切换后已提交内容不变");
+    }
 
     return fails;
 }
