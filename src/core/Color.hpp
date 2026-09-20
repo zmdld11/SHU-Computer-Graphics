@@ -19,6 +19,9 @@ struct Color {
     static constexpr Color Blue()  { return {0, 0, 255}; }
     static constexpr Color Yellow(){ return {255, 255, 0}; }
     static constexpr Color Gray()  { return {128, 128, 128}; }
+    static constexpr Color Cyan()  { return {0, 220, 220}; }
+    static constexpr Color Magenta() { return {230, 60, 200}; }
+    static constexpr Color Orange() { return {240, 150, 40}; }
 
     constexpr bool operator==(const Color& o) const {
         return r == o.r && g == o.g && b == o.b;

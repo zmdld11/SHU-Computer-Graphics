@@ -12,6 +12,14 @@ void FrameBuffer::resize(int width, int height) {
     pixels_.assign(static_cast<std::size_t>(width) * static_cast<std::size_t>(height) * 4, 0);
 }
 
+void FrameBuffer::copyFrom(const FrameBuffer& other) {
+    if (width_ != other.width_ || height_ != other.height_) {
+        width_ = other.width_;
+        height_ = other.height_;
+    }
+    pixels_ = other.pixels_;
+}
+
 void FrameBuffer::clear(const Color& color) {
     for (std::size_t i = 0; i + 3 < pixels_.size(); i += 4) {
         pixels_[i + 0] = color.r;
