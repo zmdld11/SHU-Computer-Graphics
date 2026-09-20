@@ -24,7 +24,7 @@ src/ui       GLFW 窗口、事件转发、菜单 —— 只调下层接口，不
 ## 必须遵守的工作流（详见 CONTRIBUTING.md）
 
 1. **动手前先看 issue**：领任务 = 认领 GitHub issue；没有对应 issue 就先建（写清 目标 / 范围 / 验收标准），标题动词开头。**主任务（实验一~五、期末）之外的修改也必须建 issue，打 `extension` 标签**。
-2. **一个 issue 一个短分支**：`feat/xxx`、`fix/xxx`、`docs/xxx`，从最新 `main` 切出。
+2. **分支**：实验级分支 `labN`（一个实验的全部 issue 在该分支完成，结束用一个 PR 汇总合并并打同名 tag）；零散改动用 `feat/xxx`、`fix/xxx`、`docs/xxx` 短分支。
 3. **commit 规范**：Conventional Commits + 引用 issue 号，如 `feat(raster): 实现任意斜率 Bresenham #2`。保持每个 commit 可编译。
 4. **过程留痕**：卡点、设计取舍、与课件不一致的约定，评论到对应 issue。
 5. **完成后**：issue 里写「小结」（改动内容 / 关键文件 / 踩坑 / 遗留），再开 PR（描述含 `Closes #N`）合入 main。
