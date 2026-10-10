@@ -152,6 +152,7 @@ void Canvas::present(const FrameBuffer& fb) {
     glUniform1i(glGetUniformLocation(program_, "uTex"),
                 0); // 告诉流水线：着色器里的 uTex 就用 0 号槽
     glBindVertexArray(vao_);                   // 使用 ② 里配好的矩形顶点
+    //?//
     glDrawArrays(GL_TRIANGLES, 0, 6);          // 画 6 个顶点 = 2 个三角形 = 整块矩形
 
     // ② 显示：main 里紧接着调用 glfwSwapBuffers，把这一帧翻到屏幕上（见文档）

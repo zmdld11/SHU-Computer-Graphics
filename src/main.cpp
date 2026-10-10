@@ -69,10 +69,15 @@ int main(int argc, char** argv) {
     window.setOnMouseMove([&ctrl](double x, double y) { ctrl.onMouseMove({int(x), int(y)}); });
 
     while (!window.shouldClose()) {
+        // 1. 画出这一帧所有的像素
         ctrl.render(live);
+        // 2. 标题栏显示当前模式提示
         window.setTitle(ctrl.title());
+        // 3. 像素阵列 → GPU → 窗口
         liveCanvas.present(live);
+        // 4. 显示画面（双缓冲）
         window.swapBuffers();
+        // 5. 接收新的鼠标和键盘事件
         window.pollEvents();
     }
     return 0;
