@@ -1,14 +1,13 @@
 #pragma once
+#include "core/GLLoader.hpp"
 
 namespace cg {
 
 class FrameBuffer;
 
-// 过程地址加载器（由 UI 层传入，如 glfwGetProcAddress）
-using LoaderFn = void* (*)(const char* name);
-
 // core 里唯一允许碰 OpenGL 的地方：把 FrameBuffer 的内容显示到窗口上。
 // 引擎其余部分与 OpenGL 完全无关——算法只管往 FrameBuffer 写像素。
+// GL 函数的加载机制见 GLLoader.hpp，原理说明见 docs/OpenGL与界面交互.md。
 class Canvas {
 public:
     Canvas(int width, int height, LoaderFn loader);

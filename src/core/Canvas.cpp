@@ -1,7 +1,9 @@
 #include "core/Canvas.hpp"
 #include "core/FrameBuffer.hpp"
-#include <glad/gl.h>
 #include <iostream>
+
+// GL 类型/常量/函数指针都在 gl 命名空间（见 GLLoader.hpp）
+using namespace gl;
 
 namespace cg {
 namespace {
@@ -49,10 +51,10 @@ unsigned compileShader(unsigned shaderType, const char* source) {
 } // namespace
 
 Canvas::Canvas(int width, int height, LoaderFn loader) {
-    // glad 初始化：把几百个 OpenGL 函数的地址从显卡驱动里查出来。
-    // 不做这一步，下面所有 gl 开头的函数都调不动。
-    if (loader == nullptr || gladLoadGL((GLADloadfunc)loader) == 0) {
-        std::cerr << "[Canvas] gladLoadGL failed" << std::endl;
+    // GL 函数地址加载：把本工程用到的 33 个 GL 函数地址从驱动查出来。
+    // 不做这一步，下面所有 gl 开头的函数都调不动（机制见 GLLoader.hpp）
+    if (loader == nullptr || !gl::loadGL(loader)) {
+        std::cerr << "[Canvas] GL load failed（是否不支持 OpenGL 3.3？）" << std::endl;
         return;
     }
 

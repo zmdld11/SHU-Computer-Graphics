@@ -11,7 +11,7 @@
 | 语言 | C++17 | |
 | 构建 | CMake ≥ 3.20 | 一份 `CMakeLists.txt`，所有 IDE/命令行通用 |
 | 图形库 | OpenGL 3.3 + GLFW + GLAD | GLFW 仅作"显示画布"，**所有光栅化算法手写**（Bresenham 等），符合实验考察点 |
-| 依赖管理 | FetchContent(GLFW) + 入库(glad) | GLFW 首次构建联网自动拉取；glad 源码已在 `third_party/`，无 Python 依赖 |
+| 依赖管理 | FetchContent(GLFW) + 自写 GL 加载器 | GLFW 首次构建联网自动拉取；GL 加载器是自写的 `src/core/GLLoader.*` |
 
 ## 构建与运行
 
@@ -55,18 +55,17 @@ SHU-Computer-Graphics/
 ├── CONTRIBUTING.md    # 协作规范：issue 驱动工作流
 ├── docs/              # 实验要求摘要、架构设计（类图与依赖）、OpenGL 显示原理
 ├── src/
-│   ├── core/          # FrameBuffer（putPixel 唯一画点入口）、Canvas 上屏
+│   ├── core/          # FrameBuffer（putPixel 唯一画点入口）、GLLoader、Canvas 上屏
 │   ├── raster/        # 图元生成（实验一）、填充与裁剪（实验二）
 │   ├── geom/          # 变换矩阵（实验三，接口占位）
 │   ├── curves/        # Bezier / de Casteljau（实验四，接口占位）
 │   ├── tests/         # 算法自测（--smoke）与演示图导出（--demo）
 │   ├── ui/            # GLFW 窗口 + PaintController 交互状态机
 │   └── main.cpp
-└── third_party/
-    └── glad/          # 预生成的 OpenGL 函数加载器源码
+└── CMakeLists.txt     # 仓库不含任何第三方源码
 ```
 
-**关于 `third_party/`**：存放不由我们维护、但随仓库一起编译的第三方源码。目前只有 glad——Windows 上 OpenGL 函数地址须运行时获取，glad 负责加载这些函数指针（`Canvas` 是引擎里唯一使用它的地方）。官方用法要求构建时用生成器现生成（每台机器都得装 Python + jinja2），故改为**把生成好的 3 个文件直接入库**，队友克隆即可构建；换 GL 版本的重新生成方法写在 `CMakeLists.txt` 注释里。
+**关于 OpenGL 加载器**：Windows 上 OpenGL 1.1 之后的函数地址须运行时向显卡驱动查询。这项工作由**自写**的 `src/core/GLLoader.{hpp,cpp}`（约 180 行）完成——只加载本工程实际用到的 33 个函数（`Canvas` 是唯一使用者），仓库因此不含任何第三方源码。历史版本曾用生成器库 glad（2 万余行），2026-09-20 起替换（#29）。
 
 **架构红线**：算法层（raster/geom/curves）不依赖 UI 层，绘图只经 `FrameBuffer::putPixel`；期末动画项目只调底层接口。
 
@@ -79,8 +78,10 @@ SHU-Computer-Graphics/
 | 依赖 | 用途 | 使用边界 |
 |---|---|---|
 | GLFW | 窗口与鼠标键盘事件 | 仅 `src/ui/Window.cpp` 使用 |
-| OpenGL 3.3 + glad | 把 framebuffer 贴上屏 | 仅 `src/core/Canvas.cpp` 使用 |
+| OpenGL 3.3（系统自带 opengl32） | 把 framebuffer 贴上屏 | 仅 `src/core/Canvas.cpp` 使用 |
 | CMake | 构建 | — |
+
+> 仓库**不包含任何第三方源码**：连 OpenGL 函数加载器都是自写的（`src/core/GLLoader.{hpp,cpp}`，约 180 行）——Windows 上 OpenGL 1.1 之后的函数须运行时向驱动查询地址，这份小文件只做这件事，原理见 `docs/OpenGL与界面交互.md`。
 
 ## 实验验收清单
 
