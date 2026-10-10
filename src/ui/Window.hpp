@@ -1,5 +1,5 @@
 #pragma once
-#include "core/Canvas.hpp"
+#include "core/GLLoader.hpp"  // LoaderFn（复用类型；不引 Canvas，避免 UI 依赖 GL 上屏细节）
 #include <functional>
 #include <string>
 
