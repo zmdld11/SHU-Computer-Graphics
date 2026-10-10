@@ -19,25 +19,24 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(glfw)
 
-# glad（OpenGL 函数加载器）源码已生成并提交在 third_party/glad，构建零额外依赖。
-# 如需重新生成（如换 GL 版本）：克隆 https://github.com/Dav1dde/glad ，
-# 在其目录执行 pip install jinja2 && python -m glad --api "gl:core=3.3" --out-path <仓库>/third_party/glad c
+# glad（OpenGL 函数加载器）已替换为自写的 src/core/GLLoader.{hpp,cpp}——
+# 仓库不再包含任何第三方源码（历史版本曾用 glad 生成器，见 CHANGELOG lab2 前记录）。
 
 # ---------------- 引擎本体 ----------------
 add_executable(cg-engine
     src/main.cpp
     src/core/FrameBuffer.cpp
     src/core/Canvas.cpp
+    src/core/GLLoader.cpp
     src/raster/Rasterizer.cpp
     src/raster/Fill.cpp
     src/raster/Clip.cpp
     src/tests/SmokeChecks.cpp
     src/ui/Window.cpp
     src/ui/PaintController.cpp
-    third_party/glad/src/gl.c
 )
 
-target_include_directories(cg-engine PRIVATE src third_party/glad/include)
+target_include_directories(cg-engine PRIVATE src)
 target_link_libraries(cg-engine PRIVATE glfw)
 
 if(MSVC)
