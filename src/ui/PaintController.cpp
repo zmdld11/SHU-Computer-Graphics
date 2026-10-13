@@ -12,7 +12,7 @@ namespace {
 constexpr unsigned kMasks[3] = {0xFFFFu, 0xF0F0u, 0x8888u}; // 实线/虚线/点线的像素掩码
 constexpr int kWidths[3] = {1, 3, 5};
 constexpr const char* kStyleNames[3] = {"实线", "虚线", "点线"};
-constexpr const char* kModeNames[6] = {"直线", "圆", "圆弧", "多边形", "种子填充", "裁剪"};
+constexpr const char* kModeNames[7] = {"直线", "圆", "圆弧", "多边形", "种子填充", "裁剪", "变换"};
 constexpr const char* kClipAlgoNames[2] = {"Cohen-Sutherland", "中点分割"};
 constexpr const char* kPaletteNames[6] = {"黄", "青", "品红", "绿", "橙", "红"};
 const Color kPalette[6] = {Color::Yellow(), Color::Cyan(),  Color::Magenta(),
@@ -50,6 +50,73 @@ raster::Rect rectFrom(IPoint p1, IPoint p2) {
     return {std::min(p1.x, p2.x), std::min(p1.y, p2.y), std::max(p1.x, p2.x),
             std::max(p1.y, p2.y)};
 }
+
+// ---- 变换辅助（实验三） ----
+constexpr float kPiF = 3.14159265358979f;
+constexpr float kHitTol = 5.0f;   // 选中命中容差（像素）
+constexpr float kSnapTol = 12.0f; // 对接点吸附容差（像素）
+
+IPoint roundPt(FPoint p) {
+    return {static_cast<int>(std::lround(p.x)), static_cast<int>(std::lround(p.y))};
+}
+
+FPoint toF(IPoint p) { return {static_cast<float>(p.x), static_cast<float>(p.y)}; }
+
+float normDeg(float deg) { // 归一化到 [0,360)
+    deg = std::fmod(deg, 360.0f);
+    return deg < 0.0f ? deg + 360.0f : deg;
+}
+
+float degOf(FPoint dir) { // 向量 → 角度（屏幕系顺时针为正，与 drawArc 一致）
+    const float a = std::atan2(dir.y, dir.x) * (180.0f / kPiF);
+    return a < 0.0f ? a + 360.0f : a;
+}
+
+FPoint unitVec(FPoint v) {
+    const float len = std::sqrt(v.x * v.x + v.y * v.y);
+    if (len < 1e-6f) {
+        return {1.0f, 0.0f};
+    }
+    return {v.x / len, v.y / len};
+}
+
+// 角度是否落在弧 [start→end]（顺时针段）内；span==0 视为整圆
+bool degInRange(float deg, float start, float end) {
+    const float span = normDeg(end - start);
+    return span <= 0.0f || normDeg(deg - start) <= span;
+}
+
+// 点到线段的最短距离
+float distToSegment(IPoint p, IPoint a, IPoint b) {
+    const float abx = static_cast<float>(b.x - a.x);
+    const float aby = static_cast<float>(b.y - a.y);
+    const float apx = static_cast<float>(p.x - a.x);
+    const float apy = static_cast<float>(p.y - a.y);
+    const float ab2 = abx * abx + aby * aby;
+    float t = ab2 > 0.0f ? (apx * abx + apy * aby) / ab2 : 0.0f;
+    t = t < 0.0f ? 0.0f : (t > 1.0f ? 1.0f : t);
+    const float cx = abx * t - apx;
+    const float cy = aby * t - apy;
+    return std::sqrt(cx * cx + cy * cy);
+}
+
+// 偶奇规则点在多边形内（选中判定用）
+bool pointInPolygon(IPoint p, const std::vector<IPoint>& poly) {
+    bool inside = false;
+    const int n = static_cast<int>(poly.size());
+    for (int i = 0, j = n - 1; i < n; j = i++) {
+        const IPoint& pi = poly[i];
+        const IPoint& pj = poly[j];
+        if ((pi.y > p.y) != (pj.y > p.y) &&
+            p.x < (pj.x - pi.x) * (p.y - pi.y) / static_cast<float>(pj.y - pi.y) + pi.x) {
+            inside = !inside;
+        }
+    }
+    return inside;
+}
+
+// 矩阵作用到一个点并取整（图形参数是整数像素坐标，变换结果四舍五入回存）
+IPoint xformPt(const geom::Mat3& m, IPoint p) { return roundPt(geom::apply(m, toF(p))); }
 
 } // namespace
 
@@ -121,6 +188,8 @@ void PaintController::drawShape(FrameBuffer& fb, const Shape& s) const {
         }
         break;
     }
+    case Mode::Transform:
+        break; // 变换模式没有"图形"本体（选中/参考点标记画在预览层）
     }
 }
 
@@ -190,6 +259,7 @@ void PaintController::drawPreview(FrameBuffer& fb) const {
             break;
         case Mode::Polygon:
         case Mode::SeedFill:
+        case Mode::Transform:
             break;
         }
     }
@@ -227,6 +297,25 @@ void PaintController::drawPreview(FrameBuffer& fb) const {
         }
         for (const auto& p : pendingClipWin_) {
             drawCross(fb, p, Color::Cyan(), 3);
+        }
+    }
+
+    // 变换模式标记：品红=各选中图形重心，青=当前参考点，黄=等待指定的参考点，橙=A 的对接点
+    if (mode_ == Mode::Transform) {
+        for (int idx : selected_) {
+            if (idx < 0 || idx >= static_cast<int>(shapes_.size())) {
+                continue;
+            }
+            drawCross(fb, roundPt(shapeCentroid(shapes_[idx])), Color::Magenta(), 4);
+        }
+        if (!selected_.empty()) {
+            drawCross(fb, roundPt(activeRefPoint()), Color::Cyan(), 6);
+        }
+        if (refPick_) {
+            drawCross(fb, curr_, Color::Yellow(), 6);
+        }
+        if (dockStage_ >= 1 && dockAShapeIdx_ >= 0) {
+            drawCross(fb, roundPt(dockA_), Color::Orange(), 5);
         }
     }
 
@@ -286,6 +375,11 @@ void PaintController::onKey(int key, int action) {
         cancelInProgress();
         markDirty();
         break;
+    case GLFW_KEY_7:
+        mode_ = Mode::Transform;
+        cancelInProgress();
+        markDirty();
+        break;
     case GLFW_KEY_S: // 线型
         styleIdx_ = (styleIdx_ + 1) % 3;
         break;
@@ -335,6 +429,46 @@ void PaintController::onKey(int key, int action) {
             pendingClipWin_.clear();
         }
         break;
+    case GLFW_KEY_LEFT: // 方向键微移 1px（变换模式，支持长按连发）
+    case GLFW_KEY_RIGHT:
+    case GLFW_KEY_UP:
+    case GLFW_KEY_DOWN:
+        if (mode_ == Mode::Transform && !selected_.empty()) {
+            const float dx = static_cast<float>(key == GLFW_KEY_LEFT  ? -1
+                                                : key == GLFW_KEY_RIGHT ? 1 : 0);
+            const float dy = static_cast<float>(key == GLFW_KEY_UP ? -1
+                                                : key == GLFW_KEY_DOWN  ? 1 : 0);
+            transformSelected(geom::translate(dx, dy), 0.0f, 1.0f);
+        }
+        break;
+    case GLFW_KEY_EQUAL: // +：等比放大 1.1
+    case GLFW_KEY_MINUS: // -：等比缩小 1/1.1
+        if (mode_ == Mode::Transform && !selected_.empty()) {
+            const FPoint ref = activeRefPoint();
+            const float f = (key == GLFW_KEY_EQUAL) ? 1.1f : 1.0f / 1.1f;
+            transformSelected(geom::scaleAbout(ref.x, ref.y, f, f), 0.0f, f);
+        }
+        break;
+    case GLFW_KEY_T: // 顺时针 5°（屏幕系正角）
+    case GLFW_KEY_R: // 逆时针 5°
+        if (mode_ == Mode::Transform && !selected_.empty()) {
+            const FPoint ref = activeRefPoint();
+            const float deg = (key == GLFW_KEY_T) ? 5.0f : -5.0f;
+            transformSelected(geom::rotateAbout(ref.x, ref.y, deg * kPiF / 180.0f), deg, 1.0f);
+        }
+        break;
+    case GLFW_KEY_G: // 参考点：重心（默认）↔ 指定点（随后左键点击画布）
+        if (mode_ == Mode::Transform) {
+            refManual_ = !refManual_;
+            refPick_ = refManual_;
+        }
+        break;
+    case GLFW_KEY_J: // 挑战题：两图形对接拼接
+        if (mode_ == Mode::Transform) {
+            dockStage_ = 1;
+            dockAShapeIdx_ = -1;
+        }
+        break;
     case GLFW_KEY_E: // 清屏
         shapes_.clear();
         cancelInProgress();
@@ -370,17 +504,235 @@ void PaintController::setRectClipWindow(IPoint p1, IPoint p2) {
     markDirty();
 }
 
+// ================= 变换（实验三） =================
+
+// 种子填充是像素操作的记录、裁剪线段是演示辅助，都不是参数图形，不参与选中/变换
+bool PaintController::shapeSelectable(const Shape& s) const {
+    return s.mode == Mode::Line || s.mode == Mode::Circle || s.mode == Mode::Arc ||
+           s.mode == Mode::Polygon;
+}
+
+FPoint PaintController::shapeCentroid(const Shape& s) const {
+    switch (s.mode) {
+    case Mode::Line:
+        return {(s.a.x + s.b.x) * 0.5f, (s.a.y + s.b.y) * 0.5f};
+    case Mode::Polygon: {
+        if (s.polygon.empty()) {
+            return toF(s.a);
+        }
+        FPoint sum{0.0f, 0.0f};
+        for (const auto& p : s.polygon) {
+            sum.x += static_cast<float>(p.x);
+            sum.y += static_cast<float>(p.y);
+        }
+        const float n = static_cast<float>(s.polygon.size());
+        return {sum.x / n, sum.y / n}; // 课程口径：顶点平均（非面积重心）
+    }
+    case Mode::Circle:
+    case Mode::Arc:
+    default:
+        return toF(s.a); // 圆/弧的重心取圆心
+    }
+}
+
+FPoint PaintController::combinedCentroid() const {
+    FPoint sum{0.0f, 0.0f};
+    int n = 0;
+    for (int idx : selected_) {
+        if (idx < 0 || idx >= static_cast<int>(shapes_.size())) {
+            continue;
+        }
+        const FPoint c = shapeCentroid(shapes_[idx]);
+        sum.x += c.x;
+        sum.y += c.y;
+        ++n;
+    }
+    if (n == 0) {
+        return {0.0f, 0.0f};
+    }
+    return {sum.x / n, sum.y / n};
+}
+
+FPoint PaintController::activeRefPoint() const {
+    return refManual_ ? toF(refPoint_) : combinedCentroid();
+}
+
+void PaintController::transformSelected(const geom::Mat3& m, float rotDeg, float scaleF) {
+    for (int idx : selected_) {
+        if (idx < 0 || idx >= static_cast<int>(shapes_.size())) {
+            continue;
+        }
+        applyToShape(shapes_[idx], m, rotDeg, scaleF);
+    }
+    markDirty();
+}
+
+// 矩阵作用到图形参数；rotDeg/scaleF 是矩阵对应的旋转角/等比因子，
+// 圆/弧的参数化字段（半径、角度）按它们修正（设计决策见 issue #35）
+void PaintController::applyToShape(Shape& s, const geom::Mat3& m, float rotDeg, float scaleF) {
+    switch (s.mode) {
+    case Mode::Line:
+        s.a = xformPt(m, s.a);
+        s.b = xformPt(m, s.b);
+        break;
+    case Mode::Circle:
+        s.a = xformPt(m, s.a);
+        s.radius = std::max(1, static_cast<int>(std::lround(s.radius * scaleF)));
+        break;
+    case Mode::Arc:
+        s.a = xformPt(m, s.a);
+        s.radius = std::max(1, static_cast<int>(std::lround(s.radius * scaleF)));
+        s.startDeg = normDeg(s.startDeg + rotDeg);
+        s.endDeg = normDeg(s.endDeg + rotDeg);
+        break;
+    case Mode::Polygon:
+        for (auto& p : s.polygon) {
+            p = xformPt(m, p);
+        }
+        break;
+    default:
+        break;
+    }
+}
+
+int PaintController::hitShape(IPoint p) const {
+    for (int i = static_cast<int>(shapes_.size()) - 1; i >= 0; --i) {
+        const Shape& s = shapes_[i];
+        if (!shapeSelectable(s)) {
+            continue;
+        }
+        switch (s.mode) {
+        case Mode::Line:
+            if (distToSegment(p, s.a, s.b) <= kHitTol) {
+                return i;
+            }
+            break;
+        case Mode::Circle:
+            if (std::fabs(dist(p, s.a) - s.radius) <= kHitTol) {
+                return i;
+            }
+            break;
+        case Mode::Arc:
+            if (std::fabs(dist(p, s.a) - s.radius) <= kHitTol &&
+                degInRange(angleOf(p, s.a), s.startDeg, s.endDeg)) {
+                return i;
+            }
+            break;
+        case Mode::Polygon:
+            if (pointInPolygon(p, s.polygon)) {
+                return i;
+            }
+            break;
+        default:
+            break;
+        }
+    }
+    return -1;
+}
+
+// 点击点吸附到某图形轮廓的最近点，同时给出该点的单位切向（对接拼接用）
+int PaintController::pickOutlineShape(IPoint p, FPoint& outPt, FPoint& outTan, int skipIdx) const {
+    for (int i = static_cast<int>(shapes_.size()) - 1; i >= 0; --i) {
+        const Shape& s = shapes_[i];
+        if (!shapeSelectable(s) || i == skipIdx) {
+            continue;
+        }
+        switch (s.mode) {
+        case Mode::Line: {
+            if (distToSegment(p, s.a, s.b) > kSnapTol) {
+                break;
+            }
+            const float abx = static_cast<float>(s.b.x - s.a.x);
+            const float aby = static_cast<float>(s.b.y - s.a.y);
+            const float apx = static_cast<float>(p.x - s.a.x);
+            const float apy = static_cast<float>(p.y - s.a.y);
+            const float ab2 = abx * abx + aby * aby;
+            float t = ab2 > 0.0f ? (apx * abx + apy * aby) / ab2 : 0.0f;
+            t = t < 0.0f ? 0.0f : (t > 1.0f ? 1.0f : t);
+            outPt = {s.a.x + abx * t, s.a.y + aby * t};
+            outTan = unitVec({abx, aby});
+            return i;
+        }
+        case Mode::Circle: {
+            if (std::fabs(dist(p, s.a) - s.radius) > kSnapTol) {
+                break;
+            }
+            const FPoint u = unitVec({static_cast<float>(p.x - s.a.x),
+                                      static_cast<float>(p.y - s.a.y)});
+            outPt = {s.a.x + s.radius * u.x, s.a.y + s.radius * u.y};
+            outTan = {-u.y, u.x}; // 切向 = 半径方向转 90°（屏幕系）
+            return i;
+        }
+        case Mode::Arc: {
+            if (std::fabs(dist(p, s.a) - s.radius) > kSnapTol) {
+                break;
+            }
+            const float ang = angleOf(p, s.a);
+            const float span = normDeg(s.endDeg - s.startDeg);
+            float a = ang;
+            if (span > 0.0f && normDeg(ang - s.startDeg) > span) {
+                // 点击方向在弧外：钳位到较近的端点
+                const float d = normDeg(ang - s.startDeg);
+                a = (d - span <= 360.0f - d) ? normDeg(s.startDeg + span) : s.startDeg;
+            }
+            const float rad = a * kPiF / 180.0f;
+            const FPoint u{std::cos(rad), std::sin(rad)};
+            outPt = {s.a.x + s.radius * u.x, s.a.y + s.radius * u.y};
+            outTan = {-u.y, u.x};
+            return i;
+        }
+        case Mode::Polygon: {
+            float best = 1e30f;
+            FPoint bestPt{}, bestTan{};
+            const int n = static_cast<int>(s.polygon.size());
+            for (int k = 0; k < n; ++k) {
+                const IPoint& p1 = s.polygon[k];
+                const IPoint& p2 = s.polygon[(k + 1) % n];
+                const float dd = distToSegment(p, p1, p2);
+                if (dd < best) {
+                    best = dd;
+                    const float abx = static_cast<float>(p2.x - p1.x);
+                    const float aby = static_cast<float>(p2.y - p1.y);
+                    const float apx = static_cast<float>(p.x - p1.x);
+                    const float apy = static_cast<float>(p.y - p1.y);
+                    const float ab2 = abx * abx + aby * aby;
+                    float t = ab2 > 0.0f ? (apx * abx + apy * aby) / ab2 : 0.0f;
+                    t = t < 0.0f ? 0.0f : (t > 1.0f ? 1.0f : t);
+                    bestPt = {p1.x + abx * t, p1.y + aby * t};
+                    bestTan = unitVec({abx, aby});
+                }
+            }
+            if (best <= kSnapTol) {
+                outPt = bestPt;
+                outTan = bestTan;
+                return i;
+            }
+            break;
+        }
+        default:
+            break;
+        }
+    }
+    return -1;
+}
+
 void PaintController::cancelInProgress() {
     dragging_ = false;
     arcAdjust_ = false;
     clipRectEdit_ = false;
     clipPolyEdit_ = false;
+    xformDrag_ = false;
+    refPick_ = false;
+    dockStage_ = 0;
+    dockAShapeIdx_ = -1;
+    selected_.clear();
     pendingPolygon_.clear();
     pendingClipWin_.clear();
 }
 
-void PaintController::onMouseButton(int button, int action) {
+void PaintController::onMouseButton(int button, int action, int mods) {
     const bool press = (action == GLFW_PRESS);
+    shiftHeld_ = (mods & GLFW_MOD_SHIFT) != 0;
 
     // 裁剪模式：正在连点定义凸多边形窗口
     if (mode_ == Mode::Clip && clipPolyEdit_) {
@@ -516,15 +868,97 @@ void PaintController::onMouseButton(int button, int action) {
             markDirty();
         }
         break;
+
+    case Mode::Transform:
+        if (press) {
+            // 对接流程进行中：本次点击是"选对接点"，不改选中
+            if (dockStage_ > 0) {
+                FPoint pt{}, tan{};
+                const int idx = pickOutlineShape(curr_, pt, tan, dockAShapeIdx_);
+                if (idx >= 0 && dockStage_ == 1) {
+                    dockA_ = pt;
+                    dockATangent_ = tan;
+                    dockAShapeIdx_ = idx;
+                    dockStage_ = 2;
+                } else if (idx >= 0 && dockStage_ == 2) {
+                    // 拼接 = 先绕 B 的对接点旋转 Δθ（两切向角差，±90° 内取最短），
+                    // 再把 B 的对接点平移到 A 的对接点上：M = T(A-B) · R(B, Δθ)
+                    float diff = degOf(dockATangent_) - degOf(tan);
+                    while (diff > 90.0f) {
+                        diff -= 180.0f;
+                    }
+                    while (diff < -90.0f) {
+                        diff += 180.0f;
+                    }
+                    const geom::Mat3 m = geom::mul(
+                        geom::translate(dockA_.x - pt.x, dockA_.y - pt.y),
+                        geom::rotateAbout(pt.x, pt.y, diff * kPiF / 180.0f));
+                    applyToShape(shapes_[idx], m, diff, 1.0f);
+                    dockStage_ = 0;
+                    dockAShapeIdx_ = -1;
+                    markDirty();
+                }
+                break;
+            }
+            // 指定参考点：本次点击只设定参考点，不动选中
+            if (refPick_) {
+                refPoint_ = curr_;
+                refPick_ = false;
+                markDirty();
+                break;
+            }
+            // 选中 / 多选 / 拖拽平移
+            const int hit = hitShape(curr_);
+            auto inSel = [&](int idx) {
+                return std::find(selected_.begin(), selected_.end(), idx) != selected_.end();
+            };
+            if (hit >= 0) {
+                bool sel = inSel(hit);
+                if (shiftHeld_) { // Shift：加选/移除
+                    if (sel) {
+                        selected_.erase(std::find(selected_.begin(), selected_.end(), hit));
+                    } else {
+                        selected_.push_back(hit);
+                    }
+                    sel = !sel;
+                    markDirty();
+                } else if (!sel) { // 普通点击：只选它一个
+                    selected_.clear();
+                    selected_.push_back(hit);
+                    sel = true;
+                    markDirty();
+                }
+                if (sel) { // 在选中集合里才可拖拽平移
+                    xformDrag_ = true;
+                    lastDrag_ = curr_;
+                }
+            } else { // 点空白：清除选中
+                if (!selected_.empty()) {
+                    selected_.clear();
+                    markDirty();
+                }
+            }
+        } else {
+            xformDrag_ = false;
+        }
+        break;
     }
 }
 
 void PaintController::onMouseMove(IPoint pos) {
+    // 拖拽平移：以像素为步长的增量平移（整数增量，无舍入累积）
+    if (xformDrag_ && mode_ == Mode::Transform && !selected_.empty()) {
+        const float dx = static_cast<float>(pos.x - curr_.x);
+        const float dy = static_cast<float>(pos.y - curr_.y);
+        if (dx != 0.0f || dy != 0.0f) {
+            transformSelected(geom::translate(dx, dy), 0.0f, 1.0f);
+        }
+    }
     curr_ = pos;
 }
 
 std::string PaintController::title() const {
-    std::string t = "绘图引擎（实验一/二） | 1直线 2圆 3圆弧 4多边形 5种子填充 6裁剪 | "
+    std::string t = "绘图引擎（实验一/二/三） | 1直线 2圆 3圆弧 4多边形 5种子填充 6裁剪 7变换 | "
                     "S线型 W线宽 X填充色 E清屏 右键取消 | ";
     t += kModeNames[static_cast<int>(mode_)];
     switch (mode_) {
@@ -555,6 +989,22 @@ std::string PaintController::title() const {
         t += " 算法:";
         t += clipAlgoName();
         t += " | 左键拖画线；K+拖拽设矩形窗口；P+连点右键闭合设凸多边形窗口；M 切算法";
+        break;
+    case Mode::Transform:
+        t += " 选中:";
+        t += std::to_string(selected_.size());
+        t += " 参考点:";
+        t += refManual_ ? "指定" : "重心";
+        t += " | 左键选(Shift加选) 拖拽/方向键平移 +−缩放 R/T旋转 G参考点 J对接";
+        if (refPick_) {
+            t += " | 点击画布指定参考点";
+        }
+        if (dockStage_ == 1) {
+            t += " | 对接:点击图形A轮廓选对接点";
+        }
+        if (dockStage_ == 2) {
+            t += " | 对接:点击图形B轮廓完成拼接（右键取消）";
+        }
         break;
     }
     return t;
