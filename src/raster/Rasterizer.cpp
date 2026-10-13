@@ -1,3 +1,5 @@
+// Rasterizer.cpp
+// 实验一图元生成算法：Bresenham 直线、中点圆、角度筛选圆弧，统一支持线型（实/虚/点）与线宽属性。
 #include "raster/Rasterizer.hpp"
 #include <algorithm>
 #include <cmath>

@@ -1,3 +1,5 @@
+// Point.hpp
+// 实现两种二维点类型：IPoint 整数像素坐标（光栅化用）、FPoint 浮点坐标（几何/曲线用）。
 #pragma once
 
 namespace cg {

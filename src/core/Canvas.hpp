@@ -1,3 +1,5 @@
+// Canvas.hpp
+// 实现上屏画布：把 FrameBuffer 的像素上传成 OpenGL 纹理并贴满窗口——全项目唯一接触 OpenGL 绘制的文件。
 #pragma once
 #include "core/GLLoader.hpp"
 

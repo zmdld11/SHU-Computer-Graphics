@@ -1,3 +1,5 @@
+// Bezier.hpp
+// 实验四初稿接口：用 de Casteljau 算法对 n 阶 Bezier 曲线采样（实现时另建 issue）。
 #pragma once
 #include "core/Point.hpp"
 #include <vector>

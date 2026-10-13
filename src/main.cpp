@@ -1,4 +1,5 @@
-// 程序入口：组装窗口、画板、上屏与交互控制器。
+// main.cpp
+// 实现程序入口：解析 --smoke / --demo 启动参数，组装窗口、画板、上屏与交互控制器并运行主循环。
 // 具体算法在 src/raster、src/geom、src/curves；自测与演示图在 src/tests。
 #include "core/Canvas.hpp"
 #include "core/FrameBuffer.hpp"

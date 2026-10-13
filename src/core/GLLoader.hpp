@@ -1,3 +1,5 @@
+// GLLoader.hpp
+// 实现自写 OpenGL 函数加载器：运行时按函数名向显卡驱动查询函数地址，替代第三方 glad，仓库保持零第三方源码。
 #pragma once
 #include <cstddef>
 

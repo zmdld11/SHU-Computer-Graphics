@@ -1,3 +1,5 @@
+// Fill.hpp
+// 实验二填充算法：扫描线多边形填充（新边表 NET + 活性边表 AET）与扫描线种子填充。
 #pragma once
 #include "core/Color.hpp"
 #include "core/FrameBuffer.hpp"
