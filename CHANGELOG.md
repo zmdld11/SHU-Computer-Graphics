@@ -2,6 +2,25 @@
 
 本项目以"实验任务"为单位推进：每个实验一个分支、一个 PR、一个同名 tag（约定见 [CONTRIBUTING.md](CONTRIBUTING.md)）。
 
+## extension — 2026-10-13：自绘任务栏替代键盘输入（#39）
+
+### 变更
+
+- 新增 `src/ui/Font5x7.hpp`：自写 5×7 点阵字体（大写字母/数字/符号），drawText 经 putPixel 落点，纯头文件无新 .cpp
+- PaintController 顶部两行任务栏：第一行 7 个模式按钮 + CLR；第二行 STL/WID/COL + 模式上下文按钮
+  （多边形 FILL/CLOSE；裁剪 RECTWIN/POLYWIN/ALGO；变换 +/-/ROTL/ROTR/REF/DOCK/<>^v）
+- onKey 操作逻辑重构为统一入口 `handleAction(Act)`——键盘（保留为快捷键）与按钮共用
+
+### 为什么
+
+主管要求"加一个任务栏，把键盘输入替换掉"。低耦合红线禁用一切界面框架，故整个任务栏（含文字渲染）
+自绘实现：矩形填充 + 1px 边框 + 点阵文字，全部最终落 putPixel，零新依赖。
+
+### 怎么验证
+
+- smoke 新增 3 项按钮点击模拟断言（切模式/REF 参考点切换/CLR 清屏），累计 59 项全绿
+- 既有 56 项断言零回归（键盘行为不变）；构建 0 警告
+
 ## 实验三 — 2026-10-13：二维图形变换（tag `lab3`）
 
 ### 变更

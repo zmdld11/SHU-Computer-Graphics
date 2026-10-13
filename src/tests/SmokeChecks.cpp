@@ -545,6 +545,40 @@ int runAlgorithmSelfChecks() {
         expect(canvas.pixel(500, 360) == Color::Black(), "ui3-j: 圆已离开原位");
     }
 
+    // ================= 自绘任务栏（按钮点击 = 原按键操作） =================
+    {
+        PaintController ctrl;
+        FrameBuffer canvas(kWidth, kHeight);
+
+        ctrl.render(canvas);
+        expect(canvas.pixel(400, 10) == Color(34, 34, 40), "tb: 顶部任务栏背景已绘制");
+
+        // 点击 "7 XFRM" 按钮（布局同 buildToolbar：第 7 个模式按钮，中心 ≈ (294,11)）
+        ctrl.onMouseMove({294, 11});
+        ctrl.onMouseButton(0, GLFW_PRESS);
+        ctrl.onMouseButton(0, GLFW_RELEASE);
+        expect(ctrl.title().find("变换") != std::string::npos, "tb: 点击按钮切换到变换模式");
+
+        // 点击第二行 "REF"（变换模式上下文按钮，中心 ≈ (205,31)）→ 参考点切为"指定"
+        ctrl.onMouseMove({205, 31});
+        ctrl.onMouseButton(0, GLFW_PRESS);
+        ctrl.onMouseButton(0, GLFW_RELEASE);
+        expect(ctrl.title().find("指定") != std::string::npos, "tb: REF 按钮切换参考点到指定");
+
+        // CLR 清屏：先画圆，再点第一行 "CLR"（中心 ≈ (331,11)）
+        ctrl.onKey(GLFW_KEY_2, GLFW_PRESS);
+        ctrl.onMouseMove({400, 450});
+        ctrl.onMouseButton(0, GLFW_PRESS);
+        ctrl.onMouseMove({450, 450});
+        ctrl.onMouseButton(0, GLFW_RELEASE);
+        ctrl.onMouseMove({331, 11});
+        ctrl.onMouseButton(0, GLFW_PRESS);
+        ctrl.onMouseButton(0, GLFW_RELEASE);
+        ctrl.onMouseMove({700, 550});
+        ctrl.render(canvas);
+        expect(canvas.pixel(450, 450) == Color::Black(), "tb: CLR 按钮清屏");
+    }
+
     return fails;
 }
 

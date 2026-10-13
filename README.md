@@ -46,7 +46,14 @@ cmake --build build
 | 拖窗口边缘 | 调整画板大小（内容清空） |
 | `ESC` | 退出 |
 
-当前模式与属性实时显示在窗口标题栏。
+### 任务栏（推荐入口）
+
+窗口顶部有**自绘任务栏**（约 46px 高，两行按钮），鼠标点击即可完成**全部操作**，无需记快捷键：
+
+- 第一行：`1 LINE` ~ `7 XFRM` 七个模式按钮（当前模式高亮）+ `CLR` 清屏
+- 第二行：`STL`/`WID`/`COL` 属性循环 + 随模式变化的上下文按钮——多边形：`FILL:ON/OFF`、`CLOSE`；裁剪：`RECTWIN`、`POLYWIN`、`ALGO`；变换：`+`/`-`/`ROTL`/`ROTR`/`REF`/`DOCK` 与 `<>^v` 微移
+
+任务栏由自写 5×7 点阵字体（`src/ui/Font5x7.hpp`）+ putPixel 逐像素绘制，**没有任何界面框架**；键盘按键全部保留为快捷键（与按钮共用同一操作入口 `handleAction`）。当前模式与属性仍实时显示在窗口标题栏。
 
 ## 目录结构
 
@@ -61,7 +68,7 @@ SHU-Computer-Graphics/
 │   ├── geom/          # 几何变换 Mat3：平移/放缩/旋转/绕任意参考点（实验三）
 │   ├── curves/        # Bezier / de Casteljau（实验四，接口占位）
 │   ├── tests/         # 算法自测（--smoke）与演示图导出（--demo）
-│   ├── ui/            # GLFW 窗口 + PaintController 交互状态机
+│   ├── ui/            # GLFW 窗口 + PaintController 交互状态机 + 自绘任务栏（Font5x7 点阵字体）
 │   └── main.cpp
 └── CMakeLists.txt     # 仓库不含任何第三方源码
 ```
