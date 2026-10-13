@@ -57,6 +57,23 @@ private:
         bool valid = false;
     };
 
+    // ---- 自绘任务栏（无界面框架，全部经 putPixel 绘制；键盘与按钮共用 handleAction） ----
+    enum class Act {
+        None = 0,
+        ModeLine, ModeCircle, ModeArc, ModePolygon, ModeSeed, ModeClip, ModeXform,
+        Style, Width, Color, Clear,
+        PolyFill, PolyClose,
+        ClipRect, ClipPoly, ClipAlgo,
+        ScaleUp, ScaleDown, RotCW, RotCCW, RefPoint, Dock,
+        NudgeL, NudgeR, NudgeU, NudgeD,
+    };
+    struct ToolButton {
+        Act act = Act::None;
+        std::string label;
+        int x = 0, y = 0, w = 0, h = 0;
+        bool active = false; // 当前模式/状态高亮
+    };
+
     // ---- 绘制 ----
     raster::LineStyle currentStyle() const;
     Color currentFillColor() const;
@@ -83,6 +100,13 @@ private:
     void closePolygon();
     void cancelInProgress();
     void setRectClipWindow(IPoint p1, IPoint p2);
+
+    // ---- 任务栏 ----
+    void handleAction(Act a);                        // 键盘与按钮的统一操作入口
+    void buildToolbar(std::vector<ToolButton>& btns) const;
+    void drawToolbar(FrameBuffer& fb) const;
+    bool toolbarPress(IPoint p);                     // 命中按钮则执行并返回 true
+    static constexpr int kToolbarH = 46;             // 顶部任务栏总高（像素）
 
     Mode mode_ = Mode::Line;
     int styleIdx_ = 0;     // 0/1/2 → 实线/虚线/点线

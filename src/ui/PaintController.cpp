@@ -2,6 +2,7 @@
 // 实现交互控制器：把鼠标键盘事件翻译成绘图/填充/裁剪操作，两层渲染（提交层缓存 + 每帧预览），最终像素交给 FrameBuffer。
 #include "ui/PaintController.hpp"
 #include "raster/Fill.hpp"
+#include "ui/Font5x7.hpp"
 #include <GLFW/glfw3.h>
 #include <algorithm>
 #include <cmath>
@@ -335,61 +336,101 @@ void PaintController::render(FrameBuffer& fb) {
     }
     fb.copyFrom(*committed_); // 提交层 → 显示层
     drawPreview(fb);
+    drawToolbar(fb);          // 任务栏画在最上层（UI 元素，不属于画布内容）
 }
 
 void PaintController::onKey(int key, int action) {
     if (action != GLFW_PRESS && action != GLFW_REPEAT) {
         return;
     }
+    // 键盘只是"快捷键"：与任务栏按钮共用同一操作入口
     switch (key) {
     case GLFW_KEY_1:
-    case GLFW_KEY_L:
+    case GLFW_KEY_L: handleAction(Act::ModeLine); break;
+    case GLFW_KEY_2:
+    case GLFW_KEY_C: handleAction(Act::ModeCircle); break;
+    case GLFW_KEY_3:
+    case GLFW_KEY_A: handleAction(Act::ModeArc); break;
+    case GLFW_KEY_4: handleAction(Act::ModePolygon); break;
+    case GLFW_KEY_5: handleAction(Act::ModeSeed); break;
+    case GLFW_KEY_6: handleAction(Act::ModeClip); break;
+    case GLFW_KEY_7: handleAction(Act::ModeXform); break;
+    case GLFW_KEY_S: handleAction(Act::Style); break;
+    case GLFW_KEY_W: handleAction(Act::Width); break;
+    case GLFW_KEY_X: handleAction(Act::Color); break;
+    case GLFW_KEY_F: handleAction(Act::PolyFill); break;
+    case GLFW_KEY_M: handleAction(Act::ClipAlgo); break;
+    case GLFW_KEY_K: handleAction(Act::ClipRect); break;
+    case GLFW_KEY_P: handleAction(Act::ClipPoly); break;
+    case GLFW_KEY_LEFT: handleAction(Act::NudgeL); break;
+    case GLFW_KEY_RIGHT: handleAction(Act::NudgeR); break;
+    case GLFW_KEY_UP: handleAction(Act::NudgeU); break;
+    case GLFW_KEY_DOWN: handleAction(Act::NudgeD); break;
+    case GLFW_KEY_EQUAL: handleAction(Act::ScaleUp); break;
+    case GLFW_KEY_MINUS: handleAction(Act::ScaleDown); break;
+    case GLFW_KEY_T: handleAction(Act::RotCW); break;
+    case GLFW_KEY_R: handleAction(Act::RotCCW); break;
+    case GLFW_KEY_G: handleAction(Act::RefPoint); break;
+    case GLFW_KEY_J: handleAction(Act::Dock); break;
+    case GLFW_KEY_E: handleAction(Act::Clear); break;
+    default:
+        break;
+    }
+}
+
+// 键盘与任务栏按钮的统一操作入口：所有交互动作的真正实现
+void PaintController::handleAction(Act a) {
+    switch (a) {
+    case Act::ModeLine:
         mode_ = Mode::Line;
         cancelInProgress();
         markDirty();
         break;
-    case GLFW_KEY_2:
-    case GLFW_KEY_C:
+    case Act::ModeCircle:
         mode_ = Mode::Circle;
         cancelInProgress();
         markDirty();
         break;
-    case GLFW_KEY_3:
-    case GLFW_KEY_A:
+    case Act::ModeArc:
         mode_ = Mode::Arc;
         cancelInProgress();
         markDirty();
         break;
-    case GLFW_KEY_4:
+    case Act::ModePolygon:
         mode_ = Mode::Polygon;
         cancelInProgress();
         markDirty();
         break;
-    case GLFW_KEY_5:
+    case Act::ModeSeed:
         mode_ = Mode::SeedFill;
         cancelInProgress();
         markDirty();
         break;
-    case GLFW_KEY_6:
+    case Act::ModeClip:
         mode_ = Mode::Clip;
         cancelInProgress();
         markDirty();
         break;
-    case GLFW_KEY_7:
+    case Act::ModeXform:
         mode_ = Mode::Transform;
         cancelInProgress();
         markDirty();
         break;
-    case GLFW_KEY_S: // 线型
+    case Act::Style:
         styleIdx_ = (styleIdx_ + 1) % 3;
         break;
-    case GLFW_KEY_W: // 线宽
+    case Act::Width:
         widthIdx_ = (widthIdx_ + 1) % 3;
         break;
-    case GLFW_KEY_X: // 填充色
+    case Act::Color:
         fillColorIdx_ = (fillColorIdx_ + 1) % 6;
         break;
-    case GLFW_KEY_F: // 多边形：填充 / 仅轮廓
+    case Act::Clear:
+        shapes_.clear();
+        cancelInProgress();
+        markDirty();
+        break;
+    case Act::PolyFill:
         if (mode_ == Mode::Polygon && !pendingPolygon_.empty()) {
             // 正在连点：切换本次闭合用的样式
             polygonFilled_ = !polygonFilled_;
@@ -409,74 +450,180 @@ void PaintController::onKey(int key, int action) {
             }
         }
         break;
-    case GLFW_KEY_M: // 裁剪算法切换（矩形窗口时有效）
-        if (mode_ == Mode::Clip) {
-            clipAlgoIdx_ = 1 - clipAlgoIdx_;
-            markDirty();
+    case Act::PolyClose:
+        if (mode_ == Mode::Polygon && !pendingPolygon_.empty()) {
+            closePolygon();
         }
         break;
-    case GLFW_KEY_K: // 定义矩形裁剪窗口（随后拖拽）
+    case Act::ClipRect:
         if (mode_ == Mode::Clip) {
             clipRectEdit_ = true;
             clipPolyEdit_ = false;
             pendingClipWin_.clear();
         }
         break;
-    case GLFW_KEY_P: // 定义凸多边形裁剪窗口（随后左键连点、右键闭合）
+    case Act::ClipPoly:
         if (mode_ == Mode::Clip) {
             clipPolyEdit_ = true;
             clipRectEdit_ = false;
             pendingClipWin_.clear();
         }
         break;
-    case GLFW_KEY_LEFT: // 方向键微移 1px（变换模式，支持长按连发）
-    case GLFW_KEY_RIGHT:
-    case GLFW_KEY_UP:
-    case GLFW_KEY_DOWN:
-        if (mode_ == Mode::Transform && !selected_.empty()) {
-            const float dx = static_cast<float>(key == GLFW_KEY_LEFT  ? -1
-                                                : key == GLFW_KEY_RIGHT ? 1 : 0);
-            const float dy = static_cast<float>(key == GLFW_KEY_UP ? -1
-                                                : key == GLFW_KEY_DOWN  ? 1 : 0);
-            transformSelected(geom::translate(dx, dy), 0.0f, 1.0f);
+    case Act::ClipAlgo:
+        if (mode_ == Mode::Clip) {
+            clipAlgoIdx_ = 1 - clipAlgoIdx_;
+            markDirty();
         }
         break;
-    case GLFW_KEY_EQUAL: // +：等比放大 1.1
-    case GLFW_KEY_MINUS: // -：等比缩小 1/1.1
+    case Act::ScaleUp:
+    case Act::ScaleDown:
         if (mode_ == Mode::Transform && !selected_.empty()) {
             const FPoint ref = activeRefPoint();
-            const float f = (key == GLFW_KEY_EQUAL) ? 1.1f : 1.0f / 1.1f;
+            const float f = (a == Act::ScaleUp) ? 1.1f : 1.0f / 1.1f;
             transformSelected(geom::scaleAbout(ref.x, ref.y, f, f), 0.0f, f);
         }
         break;
-    case GLFW_KEY_T: // 顺时针 5°（屏幕系正角）
-    case GLFW_KEY_R: // 逆时针 5°
+    case Act::RotCW:
+    case Act::RotCCW:
         if (mode_ == Mode::Transform && !selected_.empty()) {
             const FPoint ref = activeRefPoint();
-            const float deg = (key == GLFW_KEY_T) ? 5.0f : -5.0f;
+            const float deg = (a == Act::RotCW) ? 5.0f : -5.0f;
             transformSelected(geom::rotateAbout(ref.x, ref.y, deg * kPiF / 180.0f), deg, 1.0f);
         }
         break;
-    case GLFW_KEY_G: // 参考点：重心（默认）↔ 指定点（随后左键点击画布）
+    case Act::RefPoint:
         if (mode_ == Mode::Transform) {
             refManual_ = !refManual_;
             refPick_ = refManual_;
         }
         break;
-    case GLFW_KEY_J: // 挑战题：两图形对接拼接
+    case Act::Dock:
         if (mode_ == Mode::Transform) {
             dockStage_ = 1;
             dockAShapeIdx_ = -1;
         }
         break;
-    case GLFW_KEY_E: // 清屏
-        shapes_.clear();
-        cancelInProgress();
-        markDirty();
+    case Act::NudgeL:
+    case Act::NudgeR:
+    case Act::NudgeU:
+    case Act::NudgeD:
+        if (mode_ == Mode::Transform && !selected_.empty()) {
+            const float dx = static_cast<float>((a == Act::NudgeR) - (a == Act::NudgeL));
+            const float dy = static_cast<float>((a == Act::NudgeD) - (a == Act::NudgeU));
+            transformSelected(geom::translate(dx, dy), 0.0f, 1.0f);
+        }
         break;
+    case Act::None:
     default:
         break;
     }
+}
+
+// ================= 自绘任务栏 =================
+
+void PaintController::buildToolbar(std::vector<ToolButton>& btns) const {
+    btns.clear();
+    auto add = [&](Act act, const char* label, int x, int y, bool active) {
+        ToolButton b;
+        b.act = act;
+        b.label = label;
+        b.w = static_cast<int>(text::textWidth(label)) + 8;
+        b.h = 18;
+        b.x = x;
+        b.y = y;
+        b.active = active;
+        btns.push_back(b);
+        return x + b.w + 2;
+    };
+
+    // 第一行：7 个模式 + 清屏
+    const struct {
+        Act act;
+        const char* label;
+        Mode mode;
+    } modes[] = {
+        {Act::ModeLine, "1 LINE", Mode::Line},       {Act::ModeCircle, "2 CIRC", Mode::Circle},
+        {Act::ModeArc, "3 ARC", Mode::Arc},          {Act::ModePolygon, "4 POLY", Mode::Polygon},
+        {Act::ModeSeed, "5 SEED", Mode::SeedFill},   {Act::ModeClip, "6 CLIP", Mode::Clip},
+        {Act::ModeXform, "7 XFRM", Mode::Transform},
+    };
+    int x = 2;
+    for (const auto& m : modes) {
+        x = add(m.act, m.label, x, 2, mode_ == m.mode);
+    }
+    add(Act::Clear, "CLR", x, 2, false);
+
+    // 第二行：属性 + 随模式变化的上下文按钮
+    x = add(Act::Style, "STL", 2, 22, false);
+    x = add(Act::Width, "WID", x, 22, false);
+    x = add(Act::Color, "COL", x, 22, false);
+    if (mode_ == Mode::Polygon) {
+        x = add(Act::PolyFill, polygonFilled_ ? "FILL:ON" : "FILL:OFF", x + 8, 22, true);
+        add(Act::PolyClose, "CLOSE", x, 22, false);
+    } else if (mode_ == Mode::Clip) {
+        x = add(Act::ClipRect, "RECTWIN", x + 8, 22, false);
+        x = add(Act::ClipPoly, "POLYWIN", x, 22, false);
+        add(Act::ClipAlgo, "ALGO", x, 22, false);
+    } else if (mode_ == Mode::Transform) {
+        x = add(Act::ScaleUp, "+", x + 8, 22, false);
+        x = add(Act::ScaleDown, "-", x, 22, false);
+        x = add(Act::RotCCW, "ROTL", x, 22, false);
+        x = add(Act::RotCW, "ROTR", x, 22, false);
+        x = add(Act::RefPoint, "REF", x, 22, refManual_);
+        x = add(Act::Dock, "DOCK", x, 22, dockStage_ > 0);
+        x = add(Act::NudgeL, "<", x, 22, false);
+        x = add(Act::NudgeR, ">", x, 22, false);
+        x = add(Act::NudgeU, "^", x, 22, false);
+        add(Act::NudgeD, "v", x, 22, false);
+    }
+}
+
+void PaintController::drawToolbar(FrameBuffer& fb) const {
+    const Color kBg(34, 34, 40);
+    const Color kFace(58, 58, 70);
+    const Color kActive(70, 110, 180);
+    const Color kBorder(120, 120, 130);
+    for (int y = 0; y < kToolbarH && y < fb.height(); ++y) {
+        for (int x = 0; x < fb.width(); ++x) {
+            fb.putPixel(x, y, kBg);
+        }
+    }
+    std::vector<ToolButton> btns;
+    buildToolbar(btns);
+    for (const auto& b : btns) {
+        for (int y = b.y; y < b.y + b.h; ++y) {
+            for (int x = b.x; x < b.x + b.w; ++x) {
+                fb.putPixel(x, y, b.active ? kActive : kFace);
+            }
+        }
+        for (int x = b.x; x < b.x + b.w; ++x) { // 1px 边框
+            fb.putPixel(x, b.y, kBorder);
+            fb.putPixel(x, b.y + b.h - 1, kBorder);
+        }
+        for (int y = b.y; y < b.y + b.h; ++y) {
+            fb.putPixel(b.x, y, kBorder);
+            fb.putPixel(b.x + b.w - 1, y, kBorder);
+        }
+        const int tx = b.x + (b.w - static_cast<int>(text::textWidth(b.label.c_str()))) / 2 + 1;
+        const int ty = b.y + (b.h - text::kGlyphRows) / 2 + 1;
+        text::drawText(fb, tx, ty, b.label.c_str(), Color(230, 230, 235));
+    }
+}
+
+bool PaintController::toolbarPress(IPoint p) {
+    if (p.y >= kToolbarH) {
+        return false;
+    }
+    std::vector<ToolButton> btns;
+    buildToolbar(btns);
+    for (const auto& b : btns) {
+        if (p.x >= b.x && p.x < b.x + b.w && p.y >= b.y && p.y < b.y + b.h) {
+            handleAction(b.act);
+            markDirty(); // 高亮/标签可能变化（如当前模式按钮）
+            return true;
+        }
+    }
+    return p.y < kToolbarH; // 点在栏上但没点中按钮：吞掉事件，不落到画布
 }
 
 void PaintController::closePolygon() {
@@ -733,6 +880,11 @@ void PaintController::cancelInProgress() {
 void PaintController::onMouseButton(int button, int action, int mods) {
     const bool press = (action == GLFW_PRESS);
     shiftHeld_ = (mods & GLFW_MOD_SHIFT) != 0;
+
+    // 任务栏优先：点中按钮（或点在栏上）不落到画布
+    if (button == 0 && press && toolbarPress(curr_)) {
+        return;
+    }
 
     // 裁剪模式：正在连点定义凸多边形窗口
     if (mode_ == Mode::Clip && clipPolyEdit_) {
