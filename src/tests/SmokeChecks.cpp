@@ -313,6 +313,36 @@ int runAlgorithmSelfChecks() {
         expect(canvas.pixel(400, 300) == Color::Green(), "ui: 属性切换后已提交内容不变");
     }
 
+    // ================= extension：F 键切换已闭合多边形的填充/轮廓 =================
+    {
+        PaintController ctrl;
+        FrameBuffer canvas(kWidth, kHeight);
+
+        // 模式 4 连点三角形顶点（默认填充、默认填充色黄），右键闭合
+        ctrl.onKey(GLFW_KEY_4, GLFW_PRESS);
+        const IPoint tri[3] = {{100, 100}, {300, 100}, {200, 250}};
+        for (const auto& pt : tri) {
+            ctrl.onMouseMove(pt);
+            ctrl.onMouseButton(0, GLFW_PRESS);
+            ctrl.onMouseButton(0, GLFW_RELEASE);
+        }
+        ctrl.onMouseMove({500, 500});
+        ctrl.onMouseButton(1, GLFW_PRESS); // 右键闭合
+        ctrl.render(canvas);
+        expect(canvas.pixel(200, 150) == Color::Yellow(), "ui-f: 闭合后按当前填充色（黄）填充");
+
+        // 闭合后按 F：最后一个多边形切为仅轮廓（描边沿用自身颜色，仍为黄）
+        ctrl.onKey(GLFW_KEY_F, GLFW_PRESS);
+        ctrl.render(canvas);
+        expect(canvas.pixel(200, 150) == Color::Black(), "ui-f: F 切为仅轮廓，内部不填");
+        expect(canvas.pixel(200, 100) == Color::Yellow(), "ui-f: 仅轮廓描边存在");
+
+        // 再按 F：填充恢复
+        ctrl.onKey(GLFW_KEY_F, GLFW_PRESS);
+        ctrl.render(canvas);
+        expect(canvas.pixel(200, 150) == Color::Yellow(), "ui-f: 再按 F 填充恢复");
+    }
+
     return fails;
 }
 

@@ -296,7 +296,24 @@ void PaintController::onKey(int key, int action) {
         fillColorIdx_ = (fillColorIdx_ + 1) % 6;
         break;
     case GLFW_KEY_F: // 多边形：填充 / 仅轮廓
-        polygonFilled_ = !polygonFilled_;
+        if (mode_ == Mode::Polygon && !pendingPolygon_.empty()) {
+            // 正在连点：切换本次闭合用的样式
+            polygonFilled_ = !polygonFilled_;
+        } else {
+            // 不在输入中：切换历史里最后一个多边形；一个都没有则改默认值
+            bool toggled = false;
+            for (auto it = shapes_.rbegin(); it != shapes_.rend(); ++it) {
+                if (it->mode == Mode::Polygon) {
+                    it->filled = !it->filled;
+                    toggled = true;
+                    markDirty();
+                    break;
+                }
+            }
+            if (!toggled) {
+                polygonFilled_ = !polygonFilled_;
+            }
+        }
         break;
     case GLFW_KEY_M: // 裁剪算法切换（矩形窗口时有效）
         if (mode_ == Mode::Clip) {
