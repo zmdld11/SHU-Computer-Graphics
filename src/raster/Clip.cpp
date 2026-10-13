@@ -67,7 +67,6 @@ bool cohenSutherland(IPoint& a, IPoint& b, const Rect& win) {
     int cb = outCode(b, win);
 
     // 每轮把某个窗外端点与它越过的窗口边界求交，端点单调向窗口收缩，必然收敛；
-    // 上限 16 轮只是防御（正常 1~4 轮结束）
     for (int guard = 0; guard < 16; ++guard) {
         if ((ca | cb) == 0) {
             return true; // 完全可见
