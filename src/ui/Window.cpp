@@ -26,9 +26,8 @@ void Window::glfwKey(GLFWwindow* window, int key, int scancode, int action, int 
 
 void Window::glfwMouseButton(GLFWwindow* window, int button, int action, int mods) {
     (void)window;
-    (void)mods;
     if (s_active != nullptr && s_active->onMouseBtn_) {
-        s_active->onMouseBtn_(button, action);
+        s_active->onMouseBtn_(button, action, mods);
     }
 }
 

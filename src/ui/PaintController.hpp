@@ -1,8 +1,9 @@
 // PaintController.hpp
-// 实现交互控制器：把鼠标键盘事件翻译成绘图/填充/裁剪操作，两层渲染（提交层缓存 + 每帧预览），最终像素交给 FrameBuffer。
+// 实现交互控制器：把鼠标键盘事件翻译成绘图/填充/裁剪/变换操作，两层渲染（提交层缓存 + 每帧预览），最终像素交给 FrameBuffer。
 #pragma once
 #include "core/FrameBuffer.hpp"
 #include "core/Point.hpp"
+#include "geom/Transform.hpp"
 #include "raster/Clip.hpp"
 #include "raster/Rasterizer.hpp"
 #include <memory>
@@ -11,16 +12,16 @@
 
 namespace cg {
 
-// 交互控制器：把鼠标键盘事件翻译成"图形/填充/裁剪"操作，并按两层渲染：
+// 交互控制器：把鼠标键盘事件翻译成"图形/填充/裁剪/变换"操作，并按两层渲染：
 //   · 提交层（committed_）：图形列表的完整重绘结果，只在内容变化时重算一次
 //     （种子填充这类重算法不必每帧重放；窗口缩放、重绘都不丢内容）
 //   · 预览层：每帧在提交层之上叠加当前操作的实时预览与光标十字
-// 图形列表按顺序重放 —— 后续实验（选中、变换、曲线）都基于这个列表。
+// 图形列表按顺序重放 —— 变换直接改列表里的参数（端点/圆心/半径/顶点表），像素随之重算。
 class PaintController {
 public:
-    // key 用 GLFW 键码；button: 0=左键 1=右键；action: 0=释放 1=按下
+    // key 用 GLFW 键码；button: 0=左键 1=右键；action: 0=释放 1=按下；mods: GLFW 修饰键位集
     void onKey(int key, int action);
-    void onMouseButton(int button, int action);
+    void onMouseButton(int button, int action, int mods = 0);
     void onMouseMove(IPoint pos);
 
     // 每帧调用：必要时重绘提交层，然后拷贝 + 叠加预览
@@ -30,9 +31,10 @@ public:
     std::string title() const;
 
 private:
-    enum class Mode { Line = 0, Circle = 1, Arc = 2, Polygon = 3, SeedFill = 4, Clip = 5 };
+    enum class Mode { Line = 0, Circle = 1, Arc = 2, Polygon = 3, SeedFill = 4, Clip = 5,
+                      Transform = 6 };
 
-    // 一个已完成、可重放的图形
+    // 一个已完成、可重放的图形（参数化存储：变换改这里，像素是重算结果）
     struct Shape {
         Mode mode = Mode::Line;
         IPoint a{};                  // Line: 起点；Circle/Arc: 圆心；SeedFill: 种子点
@@ -65,6 +67,17 @@ private:
     bool clipLine(IPoint& a, IPoint& b) const;
     const char* clipAlgoName() const;
 
+    // ---- 变换（实验三） ----
+    bool shapeSelectable(const Shape& s) const;
+    FPoint shapeCentroid(const Shape& s) const;    // 线=中点 圆/弧=圆心 多边形=顶点平均
+    FPoint combinedCentroid() const;               // 选中集合的整体参考点
+    FPoint activeRefPoint() const;                 // 手动参考点（未指定时回退重心）
+    void transformSelected(const geom::Mat3& m, float rotDeg, float scaleF);
+    static void applyToShape(Shape& s, const geom::Mat3& m, float rotDeg, float scaleF);
+    int hitShape(IPoint p) const;                  // 返回命中的图形下标，无命中 -1
+    // 点击点吸附到某图形轮廓的最近点（对接点），返回该图形下标；skipIdx 用于选 B 时跳过 A
+    int pickOutlineShape(IPoint p, FPoint& outPt, FPoint& outTan, int skipIdx = -1) const;
+
     // ---- 状态变更 ----
     void markDirty() { dirty_ = true; }
     void closePolygon();
@@ -94,6 +107,19 @@ private:
     bool clipRectEdit_ = false; // K：拖拽定义矩形窗口
     bool clipPolyEdit_ = false; // P：连点定义凸多边形窗口
     std::vector<IPoint> pendingClipWin_;
+
+    // 变换状态（实验三）
+    std::vector<int> selected_;  // 选中图形的下标（shapes_ 内）
+    bool shiftHeld_ = false;     // 最近一次鼠标事件是否带 Shift（多选）
+    bool xformDrag_ = false;     // 拖拽平移进行中
+    IPoint lastDrag_{};          // 上一次增量平移的参考位置
+    bool refManual_ = false;     // 参考点：false=重心（默认） true=手动指定
+    bool refPick_ = false;       // 等待左键点击指定参考点
+    IPoint refPoint_{};          // 手动参考点
+    int dockStage_ = 0;          // 对接流程：0=未开始 1=选 A 的对接点 2=选 B 的对接点
+    int dockAShapeIdx_ = -1;     // 图形 A 的下标
+    FPoint dockA_{};             // A 上的对接点
+    FPoint dockATangent_{};      // A 对接点的单位切向
 
     // 提交层缓存
     std::unique_ptr<FrameBuffer> committed_;

@@ -343,6 +343,208 @@ int runAlgorithmSelfChecks() {
         expect(canvas.pixel(200, 150) == Color::Yellow(), "ui-f: 再按 F 填充恢复");
     }
 
+    // ================= 实验三：几何变换数学 =================
+    {
+        using namespace cg::geom;
+        const float pi = 3.14159265f;
+        auto nearF = [](FPoint a, float x, float y, float tol) {
+            return std::fabs(a.x - x) <= tol && std::fabs(a.y - y) <= tol;
+        };
+
+        expect(nearF(apply(translate(3, -2), {5, 5}), 8, 3, 1e-3f), "xform: 平移");
+        expect(nearF(apply(scale(2, 3), {4, 5}), 8, 15, 1e-3f), "xform: 放缩");
+        expect(nearF(apply(rotate(pi / 2), {10, 0}), 0, 10, 1e-3f),
+               "xform: 旋转90°（屏幕系顺时针）");
+
+        // 绕任意点旋转 == T(p)·R·T(-p)
+        const FPoint q1 = apply(rotateAbout(100, 50, pi / 3), {120, 80});
+        const FPoint q2 =
+            apply(mul(translate(100, 50), mul(rotate(pi / 3), translate(-100, -50))), {120, 80});
+        expect(nearF(q1, q2.x, q2.y, 1e-3f), "xform: rotateAbout 等价于平移组合");
+
+        // 绕任意点缩放：参考点不动，其余按比例
+        expect(nearF(apply(scaleAbout(10, 10, 2, 2), {12, 10}), 14, 10, 1e-3f) &&
+                   nearF(apply(scaleAbout(10, 10, 2, 2), {10, 10}), 10, 10, 1e-3f),
+               "xform: scaleAbout 参考点不动");
+
+        // 列向量约定：apply(mul(A,B), p) == apply(A, apply(B, p))（先 B 后 A）
+        const FPoint m1 = apply(mul(translate(5, 0), scale(2, 2)), {3, 3});
+        const FPoint m2 = apply(translate(5, 0), apply(scale(2, 2), {3, 3}));
+        expect(nearF(m1, m2.x, m2.y, 1e-3f), "xform: mul 组合顺序（先 B 后 A）");
+    }
+
+    // ================= 实验三：选中 + 变换交互（无窗口模拟） =================
+    {
+        PaintController ctrl;
+        FrameBuffer canvas(kWidth, kHeight);
+
+        // 画一条水平线 (100,300)→(200,300)，模式 7 点击选中，方向键右移 5px
+        ctrl.onKey(GLFW_KEY_1, GLFW_PRESS);
+        ctrl.onMouseMove({100, 300});
+        ctrl.onMouseButton(0, GLFW_PRESS);
+        ctrl.onMouseMove({200, 300});
+        ctrl.onMouseButton(0, GLFW_RELEASE);
+        ctrl.onKey(GLFW_KEY_7, GLFW_PRESS);
+        ctrl.onMouseMove({150, 300});
+        ctrl.onMouseButton(0, GLFW_PRESS);
+        ctrl.onMouseButton(0, GLFW_RELEASE);
+        for (int i = 0; i < 5; ++i) {
+            ctrl.onKey(GLFW_KEY_RIGHT, GLFW_PRESS);
+        }
+        ctrl.render(canvas);
+        expect(canvas.pixel(205, 300) == Color::White(), "ui3: 右移 5px 后新位置有像素");
+        expect(canvas.pixel(100, 300) == Color::Black(), "ui3: 原位置已空");
+
+        // 点空白清除选中 → 方向键不再生效
+        ctrl.onMouseMove({700, 500});
+        ctrl.onMouseButton(0, GLFW_PRESS);
+        ctrl.onMouseButton(0, GLFW_RELEASE);
+        ctrl.onKey(GLFW_KEY_RIGHT, GLFW_PRESS);
+        ctrl.render(canvas);
+        expect(canvas.pixel(205, 300) == Color::White() && canvas.pixel(206, 300) == Color::Black(),
+               "ui3: 清除选中后方向键无效");
+
+        // 圆的等比缩放（+/-，圆心为默认参考点）：r 50→55→50
+        ctrl.onKey(GLFW_KEY_2, GLFW_PRESS);
+        ctrl.onMouseMove({400, 450});
+        ctrl.onMouseButton(0, GLFW_PRESS);
+        ctrl.onMouseMove({450, 450}); // 半径 50
+        ctrl.onMouseButton(0, GLFW_RELEASE);
+        ctrl.onKey(GLFW_KEY_7, GLFW_PRESS);
+        ctrl.onMouseMove({450, 450}); // 点圆环选中
+        ctrl.onMouseButton(0, GLFW_PRESS);
+        ctrl.onMouseButton(0, GLFW_RELEASE);
+        ctrl.onKey(GLFW_KEY_EQUAL, GLFW_PRESS); // ×1.1
+        ctrl.render(canvas);
+        expect(canvas.pixel(455, 450) != Color::Black() && canvas.pixel(345, 450) != Color::Black(),
+               "ui3: 圆绕圆心等比放大 r≈55");
+        ctrl.onMouseMove({700, 550}); // 光标挪开再验证缩小，避免十字盖住断言点
+        ctrl.onKey(GLFW_KEY_MINUS, GLFW_PRESS); // ÷1.1
+        ctrl.render(canvas);
+        expect(canvas.pixel(450, 450) != Color::Black() && canvas.pixel(455, 450) == Color::Black(),
+               "ui3: 缩小后 r 恢复≈50");
+
+        // 三角形绕重心旋转（T×9 = 45°）：画面变化且重心附近仍有填充
+        ctrl.onKey(GLFW_KEY_E, GLFW_PRESS);
+        ctrl.onKey(GLFW_KEY_4, GLFW_PRESS);
+        const IPoint tri[3] = {{300, 100}, {500, 100}, {400, 260}};
+        for (const auto& pt : tri) {
+            ctrl.onMouseMove(pt);
+            ctrl.onMouseButton(0, GLFW_PRESS);
+            ctrl.onMouseButton(0, GLFW_RELEASE);
+        }
+        ctrl.onMouseMove({700, 500});
+        ctrl.onMouseButton(1, GLFW_PRESS); // 右键闭合（填充）
+        ctrl.onKey(GLFW_KEY_7, GLFW_PRESS);
+        ctrl.onMouseMove({400, 150}); // 三角形内部 → 选中
+        ctrl.onMouseButton(0, GLFW_PRESS);
+        ctrl.onMouseButton(0, GLFW_RELEASE);
+        FrameBuffer before(kWidth, kHeight);
+        ctrl.render(before);
+        for (int i = 0; i < 9; ++i) {
+            ctrl.onKey(GLFW_KEY_T, GLFW_PRESS);
+        }
+        FrameBuffer after(kWidth, kHeight);
+        ctrl.render(after);
+        bool rotated = false;
+        for (int y = 60; y < 320 && !rotated; ++y) {
+            for (int x = 260; x < 540; ++x) {
+                if (before.pixel(x, y) != after.pixel(x, y)) {
+                    rotated = true;
+                    break;
+                }
+            }
+        }
+        expect(rotated, "ui3: 绕重心旋转后画面变化");
+        expect(after.pixel(400, 165) == Color::Yellow(), "ui3: 旋转后重心附近仍有填充");
+
+        // G 指定任意参考点 → 缩放绕它（不再是重心）
+        ctrl.onKey(GLFW_KEY_G, GLFW_PRESS);
+        ctrl.onMouseMove({200, 500});
+        ctrl.onMouseButton(0, GLFW_PRESS); // 参考点 = (200,500)
+        ctrl.onMouseButton(0, GLFW_RELEASE);
+        ctrl.onKey(GLFW_KEY_MINUS, GLFW_PRESS); // ÷1.1 绕 (200,500)
+        ctrl.render(canvas);
+        bool moved = false;
+        for (int y = 60; y < 320 && !moved; ++y) {
+            for (int x = 260; x < 540; ++x) {
+                if (after.pixel(x, y) != canvas.pixel(x, y)) {
+                    moved = true;
+                    break;
+                }
+            }
+        }
+        expect(moved, "ui3: 指定任意参考点后缩放生效");
+
+        // Shift 多选：两条线一起平移
+        ctrl.onKey(GLFW_KEY_E, GLFW_PRESS);
+        ctrl.onKey(GLFW_KEY_1, GLFW_PRESS);
+        ctrl.onMouseMove({100, 100});
+        ctrl.onMouseButton(0, GLFW_PRESS);
+        ctrl.onMouseMove({150, 100});
+        ctrl.onMouseButton(0, GLFW_RELEASE);
+        ctrl.onMouseMove({300, 200});
+        ctrl.onMouseButton(0, GLFW_PRESS);
+        ctrl.onMouseMove({350, 200});
+        ctrl.onMouseButton(0, GLFW_RELEASE);
+        ctrl.onKey(GLFW_KEY_7, GLFW_PRESS);
+        ctrl.onMouseMove({125, 100});
+        ctrl.onMouseButton(0, GLFW_PRESS);
+        ctrl.onMouseButton(0, GLFW_RELEASE);
+        ctrl.onMouseMove({325, 200});
+        ctrl.onMouseButton(0, GLFW_PRESS, GLFW_MOD_SHIFT); // Shift 加选
+        ctrl.onMouseButton(0, GLFW_RELEASE, GLFW_MOD_SHIFT);
+        ctrl.onMouseMove({130, 100});
+        ctrl.onMouseButton(0, GLFW_PRESS);
+        ctrl.onMouseMove({180, 100}); // 拖拽 +50px
+        ctrl.onMouseButton(0, GLFW_RELEASE);
+        ctrl.render(canvas);
+        expect(canvas.pixel(200, 100) == Color::White() && canvas.pixel(380, 200) == Color::White(),
+               "ui3: Shift 多选后拖拽平移两条线一起移动");
+    }
+
+    // ================= 实验三（挑战题）：对接拼接 =================
+    {
+        PaintController ctrl;
+        FrameBuffer canvas(kWidth, kHeight);
+
+        // A：45° 斜线 (100,100)→(200,200)；B：圆 (500,400) r=40
+        ctrl.onKey(GLFW_KEY_1, GLFW_PRESS);
+        ctrl.onMouseMove({100, 100});
+        ctrl.onMouseButton(0, GLFW_PRESS);
+        ctrl.onMouseMove({200, 200});
+        ctrl.onMouseButton(0, GLFW_RELEASE);
+        ctrl.onKey(GLFW_KEY_2, GLFW_PRESS);
+        ctrl.onMouseMove({500, 400});
+        ctrl.onMouseButton(0, GLFW_PRESS);
+        ctrl.onMouseMove({500, 360});
+        ctrl.onMouseButton(0, GLFW_RELEASE);
+
+        ctrl.onKey(GLFW_KEY_7, GLFW_PRESS);
+        ctrl.onKey(GLFW_KEY_J, GLFW_PRESS);
+        ctrl.onMouseMove({150, 150}); // A 的对接点：斜线中点（切向 45°）
+        ctrl.onMouseButton(0, GLFW_PRESS);
+        ctrl.onMouseButton(0, GLFW_RELEASE);
+        ctrl.onMouseMove({500, 360}); // B 的对接点：圆顶点（切向 0°）
+        ctrl.onMouseButton(0, GLFW_PRESS);
+        ctrl.onMouseButton(0, GLFW_RELEASE);
+        ctrl.onMouseMove({700, 550}); // 光标挪开，避免十字干扰断言
+        ctrl.render(canvas);
+
+        // 圆的顶点（原 (500,360)）应旋转 45° 并平移到 A 的中点 (150,150) 上
+        bool docked = false;
+        for (int dy = -2; dy <= 2 && !docked; ++dy) {
+            for (int dx = -2; dx <= 2; ++dx) {
+                if (canvas.pixel(150 + dx, 150 + dy) != Color::Black()) {
+                    docked = true;
+                    break;
+                }
+            }
+        }
+        expect(docked, "ui3-j: 拼接后 B 的对接点落在 A 的对接点上（±2px）");
+        expect(canvas.pixel(500, 360) == Color::Black(), "ui3-j: 圆已离开原位");
+    }
+
     return fails;
 }
 

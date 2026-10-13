@@ -66,7 +66,9 @@ int main(int argc, char** argv) {
     });
 
     window.setOnKey([&ctrl](int key, int action) { ctrl.onKey(key, action); });
-    window.setOnMouseButton([&ctrl](int button, int action) { ctrl.onMouseButton(button, action); });
+    window.setOnMouseButton([&ctrl](int button, int action, int mods) {
+        ctrl.onMouseButton(button, action, mods);
+    });
     window.setOnMouseMove([&ctrl](double x, double y) { ctrl.onMouseMove({int(x), int(y)}); });
 
     while (!window.shouldClose()) {
