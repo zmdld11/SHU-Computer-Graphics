@@ -1,3 +1,5 @@
+// PaintController.hpp
+// 实现交互控制器：把鼠标键盘事件翻译成绘图/填充/裁剪操作，两层渲染（提交层缓存 + 每帧预览），最终像素交给 FrameBuffer。
 #pragma once
 #include "core/FrameBuffer.hpp"
 #include "core/Point.hpp"

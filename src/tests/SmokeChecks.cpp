@@ -1,5 +1,5 @@
-// 算法自测与演示图导出。
-// 断言按"实验"分节；每节先 fb.clear()，再对具体像素/返回值断言。
+// SmokeChecks.cpp
+// 实现算法自测与演示图导出：断言按"实验"分节，每节先 fb.clear()，再对具体像素/返回值断言。
 #include "tests/SmokeChecks.hpp"
 
 #include "core/Color.hpp"

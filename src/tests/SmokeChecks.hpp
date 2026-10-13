@@ -1,3 +1,5 @@
+// SmokeChecks.hpp
+// 实现程序自检入口声明：runAlgorithmSelfChecks（--smoke 调用）与 writeDemoImage（--demo 调用）。
 #pragma once
 
 namespace cg::tests {

@@ -1,3 +1,5 @@
+// PaintController.cpp
+// 实现交互控制器：把鼠标键盘事件翻译成绘图/填充/裁剪操作，两层渲染（提交层缓存 + 每帧预览），最终像素交给 FrameBuffer。
 #include "ui/PaintController.hpp"
 #include "raster/Fill.hpp"
 #include <GLFW/glfw3.h>

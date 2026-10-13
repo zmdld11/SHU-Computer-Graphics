@@ -1,3 +1,5 @@
+// Clip.cpp
+// 实验二裁剪算法：Cohen-Sutherland 编码裁剪、中点分割裁剪；挑战题 Cyrus-Beck 任意凸多边形窗口裁剪。
 #include "raster/Clip.hpp"
 #include <algorithm>
 #include <cmath>

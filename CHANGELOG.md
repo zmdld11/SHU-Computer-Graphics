@@ -2,6 +2,12 @@
 
 本项目以"实验任务"为单位推进：每个实验一个分支、一个 PR、一个同名 tag（约定见 [CONTRIBUTING.md](CONTRIBUTING.md)）。
 
+## extension — 2026-10-13：全部源文件添加统一文件头
+
+- `src/` 下 23 个 .hpp/.cpp 顶部统一加两行注释：`// 文件名` + `// 实现…一句话职责`（issue #31）
+- main.cpp、SmokeChecks.cpp 原首行注释并入文件头；其余既有注释原样保留
+- 纯注释改动：全量重建零警告、`--smoke` 全绿、功能零变化
+
 ## extension — 2026-09-20：自写 GL 加载器替换第三方 glad
 
 ### 变更

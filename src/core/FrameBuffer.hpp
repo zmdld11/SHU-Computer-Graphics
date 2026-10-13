@@ -1,3 +1,5 @@
+// FrameBuffer.hpp
+// 实现 CPU 像素画板：一块按行存储的内存像素数组，putPixel 是全项目唯一的画点入口，所有实验算法都画在它上面。
 #pragma once
 #include "core/Color.hpp"
 #include <cstddef>

@@ -1,3 +1,5 @@
+// Transform.hpp
+// 实验三初稿接口：3x3 齐次坐标矩阵的平移/缩放/旋转（含绕任意点），实现时另建 issue。
 #pragma once
 #include "core/Point.hpp"
 

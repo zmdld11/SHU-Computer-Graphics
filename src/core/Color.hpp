@@ -1,3 +1,5 @@
+// Color.hpp
+// 实现 RGB 颜色类型与常用预设色（黑红黄蓝绿等），全项目统一用它表示颜色。
 #pragma once
 #include <cstdint>
 

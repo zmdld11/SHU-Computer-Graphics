@@ -1,3 +1,5 @@
+// Window.hpp
+// 实现窗口层：GLFW 建窗与 OpenGL 上下文、键盘/鼠标/尺寸事件回调转发——全项目唯一接触 GLFW 的文件。
 #pragma once
 #include "core/GLLoader.hpp"
 #include <functional>
