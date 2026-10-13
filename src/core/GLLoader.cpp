@@ -45,7 +45,6 @@ bool loadGL(cg::LoaderFn getProcAddress) {
     }
 
     // 按名字查地址；查不到任何一个就整体失败。
-    // 宏展开后等价于：glActiveTexture = reinterpret_cast<decltype(glActiveTexture)>(getProcAddress("glActiveTexture"));
 #define CG_LOAD(fn)                                                                                \
     do {                                                                                           \
         fn = reinterpret_cast<decltype(fn)>(getProcAddress(#fn));                                  \

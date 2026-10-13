@@ -14,7 +14,7 @@ using LoaderFn = void* (*)(const char* name);
 // 数值与签名抄自 OpenGL 官方规范（曾与生成器产物逐一核对）。
 namespace gl {
 
-// ---- 基础类型（与官方 KHR 平台头一致）----
+// ---- 基础类型  ----
 using GLenum = unsigned int;
 using GLuint = unsigned int;
 using GLint = int;
@@ -24,7 +24,7 @@ using GLbitfield = unsigned int;
 using GLchar = char;
 using GLsizeiptr = std::ptrdiff_t;
 
-// ---- 常量（只列本工程用到的）----
+// ---- 常量  ----
 constexpr GLenum GL_FALSE = 0;
 constexpr GLenum GL_TRUE = 1;
 constexpr GLenum GL_FLOAT = 0x1406;
