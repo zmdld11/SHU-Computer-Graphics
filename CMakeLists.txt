@@ -32,6 +32,7 @@ add_executable(cg-engine
     src/raster/Fill.cpp
     src/raster/Clip.cpp
     src/curves/Bezier.cpp
+    src/curves/BSpline.cpp
     src/geom/Transform.cpp
     src/tests/SmokeChecks.cpp
     src/ui/Window.cpp
