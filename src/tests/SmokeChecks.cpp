@@ -545,41 +545,192 @@ int runAlgorithmSelfChecks() {
         expect(canvas.pixel(500, 360) == Color::Black(), "ui3-j: 圆已离开原位");
     }
 
+    // ================= 实验三：框选（橡皮筋矩形批量选中） =================
+    {
+        PaintController ctrl;
+        FrameBuffer canvas(kWidth, kHeight);
+
+        // 三条相离直线
+        ctrl.onKey(GLFW_KEY_1, GLFW_PRESS);
+        const IPoint segs[3][2] = {{{100, 100}, {200, 100}}, {{400, 100}, {500, 100}},
+                                   {{650, 400}, {720, 450}}};
+        for (const auto& sg : segs) {
+            ctrl.onMouseMove(sg[0]);
+            ctrl.onMouseButton(0, GLFW_PRESS);
+            ctrl.onMouseMove(sg[1]);
+            ctrl.onMouseButton(0, GLFW_RELEASE);
+        }
+        ctrl.onKey(GLFW_KEY_7, GLFW_PRESS);
+
+        // 空白处拖拽框选前两条 → 选中:2（品红重心标记出现在两线中点）
+        ctrl.onMouseMove({60, 60});
+        ctrl.onMouseButton(0, GLFW_PRESS);
+        ctrl.onMouseMove({550, 160});
+        ctrl.onMouseButton(0, GLFW_RELEASE);
+        ctrl.onMouseMove({750, 60}); // 光标移开，不遮断言点
+        ctrl.render(canvas);
+        expect(ctrl.title().find("选中:2") != std::string::npos, "band: 框选两条直线");
+        expect(canvas.pixel(150, 100) == Color::Magenta() &&
+                   canvas.pixel(450, 100) == Color::Magenta(),
+               "band: 两个重心标记已绘制");
+
+        // Shift+框选第三条 → 叠加为 选中:3
+        ctrl.onMouseMove({600, 360});
+        ctrl.onMouseButton(0, GLFW_PRESS, GLFW_MOD_SHIFT);
+        ctrl.onMouseMove({750, 480});
+        ctrl.onMouseButton(0, GLFW_RELEASE, GLFW_MOD_SHIFT);
+        expect(ctrl.title().find("选中:3") != std::string::npos, "band: Shift 框选叠加第三条");
+
+        // 空白处原地微点 → 清除选中
+        ctrl.onMouseMove({60, 550});
+        ctrl.onMouseButton(0, GLFW_PRESS);
+        ctrl.onMouseButton(0, GLFW_RELEASE);
+        expect(ctrl.title().find("选中:0") != std::string::npos, "band: 空白微点清除选中");
+    }
+
+    // ================= extension：常驻裁剪（窗口独立于模式，持续生效可开关） =================
+    {
+        PaintController ctrl;
+        FrameBuffer canvas(kWidth, kHeight);
+
+        // 裁剪模式里 K+拖拽显式定义矩形窗口 → 常驻裁剪自动开启
+        ctrl.onKey(GLFW_KEY_6, GLFW_PRESS);
+        ctrl.onKey(GLFW_KEY_K, GLFW_PRESS);
+        ctrl.onMouseMove({200, 150});
+        ctrl.onMouseButton(0, GLFW_PRESS);
+        ctrl.onMouseMove({640, 480});
+        ctrl.onMouseButton(0, GLFW_RELEASE);
+        // 切回直线/圆模式画跨界图形：线 (100,300)→(700,300)，圆心 (200,300) r=100
+        ctrl.onKey(GLFW_KEY_1, GLFW_PRESS);
+        ctrl.onMouseMove({100, 300});
+        ctrl.onMouseButton(0, GLFW_PRESS);
+        ctrl.onMouseMove({700, 300});
+        ctrl.onMouseButton(0, GLFW_RELEASE);
+        ctrl.onKey(GLFW_KEY_2, GLFW_PRESS);
+        ctrl.onMouseMove({200, 300});
+        ctrl.onMouseButton(0, GLFW_PRESS);
+        ctrl.onMouseMove({300, 300});
+        ctrl.onMouseButton(0, GLFW_RELEASE);
+        ctrl.onMouseMove({750, 80}); // 光标移开
+        ctrl.render(canvas);
+
+        auto rowHasWhite = [&](int y, int x0, int x1) {
+            for (int x = x0; x <= x1; ++x) {
+                if (canvas.pixel(x, y) == Color::White()) {
+                    return true;
+                }
+            }
+            return false;
+        };
+        expect(rowHasWhite(300, 300, 500), "clip2: 窗口内线段正常显示");
+        expect(!rowHasWhite(300, 100, 199), "clip2: 窗口外线段/圆弧被隐藏（左）");
+        expect(!rowHasWhite(300, 641, 700), "clip2: 窗口外线段被隐藏（右）");
+
+        // V 关闭 → 窗口外内容立即恢复；再开 → 再次隐藏
+        ctrl.onKey(GLFW_KEY_V, GLFW_PRESS);
+        ctrl.render(canvas);
+        expect(rowHasWhite(300, 100, 199), "clip2: 关闭常驻裁剪后窗口外恢复显示");
+        ctrl.onKey(GLFW_KEY_V, GLFW_PRESS);
+        ctrl.render(canvas);
+        expect(!rowHasWhite(300, 100, 199), "clip2: 重新开启后窗口外再次隐藏");
+
+        // 凸多边形窗口（挑战题）同样常驻：P+三点+右键闭合
+        ctrl.onKey(GLFW_KEY_6, GLFW_PRESS);
+        ctrl.onKey(GLFW_KEY_P, GLFW_PRESS);
+        const IPoint tri[3] = {{250, 200}, {600, 200}, {420, 500}};
+        for (const auto& pt : tri) {
+            ctrl.onMouseMove(pt);
+            ctrl.onMouseButton(0, GLFW_PRESS);
+            ctrl.onMouseButton(0, GLFW_RELEASE);
+        }
+        ctrl.onMouseButton(1, GLFW_PRESS); // 右键闭合
+        ctrl.onKey(GLFW_KEY_1, GLFW_PRESS);
+        ctrl.onMouseMove({100, 350});
+        ctrl.onMouseButton(0, GLFW_PRESS);
+        ctrl.onMouseMove({750, 350});
+        ctrl.onMouseButton(0, GLFW_RELEASE);
+        ctrl.onMouseMove({750, 80});
+        ctrl.render(canvas);
+        expect(rowHasWhite(350, 400, 450), "clip2: 凸多边形窗口内线段显示");
+        expect(!rowHasWhite(350, 100, 240), "clip2: 凸多边形窗口外线段隐藏");
+        expect(ctrl.title().find("裁剪:开") != std::string::npos, "clip2: 标题栏显示常驻裁剪状态");
+    }
+
     // ================= 自绘任务栏（按钮点击 = 原按键操作） =================
     {
         PaintController ctrl;
         FrameBuffer canvas(kWidth, kHeight);
 
         ctrl.render(canvas);
-        expect(canvas.pixel(400, 10) == Color(34, 34, 40), "tb: 顶部任务栏背景已绘制");
+        // 按标签定位按钮中心并点击——布局随字体度量变化，断言不写死坐标
+        auto clickBtn = [&](const char* label) {
+            for (const auto& b : ctrl.toolbarButtons()) {
+                if (b.label == label) {
+                    ctrl.onMouseMove({b.x + b.w / 2, b.y + b.h / 2});
+                    ctrl.onMouseButton(0, GLFW_PRESS);
+                    ctrl.onMouseButton(0, GLFW_RELEASE);
+                    return true;
+                }
+            }
+            return false;
+        };
 
-        // 点击 "7 XFRM" 按钮（布局同 buildToolbar：第 7 个模式按钮，中心 ≈ (294,11)）
-        ctrl.onMouseMove({294, 11});
-        ctrl.onMouseButton(0, GLFW_PRESS);
-        ctrl.onMouseButton(0, GLFW_RELEASE);
+        const int tbH = ctrl.toolbarHeight();
+        expect(canvas.pixel(799, tbH - 3) == Color(34, 34, 40), "tb: 顶部任务栏背景已绘制");
+
+        // "7 变换" 按钮内应存在浅色文字像素（系统字体/回退点阵都在按钮框内绘制）
+        bool hasText = false;
+        for (const auto& b : ctrl.toolbarButtons()) {
+            if (b.label != "7 变换") {
+                continue;
+            }
+            for (int y = b.y; y < b.y + b.h && !hasText; ++y) {
+                for (int x = b.x; x < b.x + b.w; ++x) {
+                    if (canvas.pixel(x, y) == Color(230, 230, 235)) {
+                        hasText = true;
+                        break;
+                    }
+                }
+            }
+        }
+        expect(hasText, "tb: 按钮文字已渲染");
+
+        expect(clickBtn("7 变换"), "tb: 找到模式按钮");
         expect(ctrl.title().find("变换") != std::string::npos, "tb: 点击按钮切换到变换模式");
+        expect(clickBtn("G 参考点"), "tb: 找到参考点按钮");
+        expect(ctrl.title().find("指定") != std::string::npos, "tb: 参考点按钮切为指定");
 
-        // 点击第二行 "REF"（变换模式上下文按钮，中心 ≈ (205,31)）→ 参考点切为"指定"
-        ctrl.onMouseMove({205, 31});
-        ctrl.onMouseButton(0, GLFW_PRESS);
-        ctrl.onMouseButton(0, GLFW_RELEASE);
-        expect(ctrl.title().find("指定") != std::string::npos, "tb: REF 按钮切换参考点到指定");
-
-        // CLR 清屏：先画圆，再点第一行 "CLR"（中心 ≈ (331,11)）
+        // E 清屏：先画圆，再点 "E 清屏"
         ctrl.onKey(GLFW_KEY_2, GLFW_PRESS);
         ctrl.onMouseMove({400, 450});
         ctrl.onMouseButton(0, GLFW_PRESS);
         ctrl.onMouseMove({450, 450});
         ctrl.onMouseButton(0, GLFW_RELEASE);
-        ctrl.onMouseMove({331, 11});
-        ctrl.onMouseButton(0, GLFW_PRESS);
-        ctrl.onMouseButton(0, GLFW_RELEASE);
+        expect(clickBtn("E 清屏"), "tb: 找到清屏按钮");
         ctrl.onMouseMove({700, 550});
         ctrl.render(canvas);
-        expect(canvas.pixel(450, 450) == Color::Black(), "tb: CLR 按钮清屏");
+        expect(canvas.pixel(450, 450) == Color::Black(), "tb: 清屏按钮清屏");
     }
 
     return fails;
+}
+
+bool writePPM(const char* path, const FrameBuffer& fb) {
+    std::ofstream out(path, std::ios::binary);
+    if (!out) {
+        std::cerr << "[demo] 无法写入 " << path << std::endl;
+        return false;
+    }
+    out << "P6\n" << fb.width() << " " << fb.height() << "\n255\n";
+    for (int y = 0; y < fb.height(); ++y) {
+        for (int x = 0; x < fb.width(); ++x) {
+            const Color c = fb.pixel(x, y);
+            out.put(static_cast<char>(c.r));
+            out.put(static_cast<char>(c.g));
+            out.put(static_cast<char>(c.b));
+        }
+    }
+    return out.good();
 }
 
 bool writeDemoImage(const char* path) {
@@ -629,21 +780,7 @@ bool writeDemoImage(const char* path) {
         }
     }
 
-    std::ofstream out(path, std::ios::binary);
-    if (!out) {
-        std::cerr << "[demo] 无法写入 " << path << std::endl;
-        return false;
-    }
-    out << "P6\n" << fb.width() << " " << fb.height() << "\n255\n";
-    for (int y = 0; y < fb.height(); ++y) {
-        for (int x = 0; x < fb.width(); ++x) {
-            const Color c = fb.pixel(x, y);
-            out.put(static_cast<char>(c.r));
-            out.put(static_cast<char>(c.g));
-            out.put(static_cast<char>(c.b));
-        }
-    }
-    return out.good();
+    return writePPM(path, fb);
 }
 
 } // namespace cg::tests

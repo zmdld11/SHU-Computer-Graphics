@@ -1,11 +1,11 @@
 // Font5x7.hpp
-// 实现自写 5x7 点阵字体与 drawText：给自绘任务栏提供按钮文字，经 putPixel 落点，无任何外部依赖。
+// 实现自写 5x7 点阵字体与 drawText：作为 ui/Text 的非 Windows 回退实现，经 putPixel 落点，无任何外部依赖。
 #pragma once
 #include "core/Color.hpp"
 #include "core/FrameBuffer.hpp"
 #include <cstddef>
 
-namespace cg::text {
+namespace cg::font5x7 {
 
 // 字形：5 列，每列 1 字节，bit0 = 最上行（共 7 行）。只收录本工程界面用到的字符。
 inline constexpr int kGlyphCols = 5;
@@ -101,4 +101,4 @@ inline int textWidth(const char* s) {
     return n * kAdvance;
 }
 
-} // namespace cg::text
+} // namespace cg::font5x7

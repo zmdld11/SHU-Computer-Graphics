@@ -2,10 +2,11 @@
 // 实现交互控制器：把鼠标键盘事件翻译成绘图/填充/裁剪操作，两层渲染（提交层缓存 + 每帧预览），最终像素交给 FrameBuffer。
 #include "ui/PaintController.hpp"
 #include "raster/Fill.hpp"
-#include "ui/Font5x7.hpp"
+#include "ui/Text.hpp"
 #include <GLFW/glfw3.h>
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace cg {
 namespace {
@@ -40,11 +41,12 @@ void drawCross(FrameBuffer& fb, IPoint p, const Color& c, int half) {
     }
 }
 
-void drawRectOutline(FrameBuffer& fb, const raster::Rect& r, const Color& c) {
-    raster::drawLine(fb, {r.xmin, r.ymin}, {r.xmax, r.ymin}, c, {});
-    raster::drawLine(fb, {r.xmax, r.ymin}, {r.xmax, r.ymax}, c, {});
-    raster::drawLine(fb, {r.xmax, r.ymax}, {r.xmin, r.ymax}, c, {});
-    raster::drawLine(fb, {r.xmin, r.ymax}, {r.xmin, r.ymin}, c, {});
+void drawRectOutline(FrameBuffer& fb, const raster::Rect& r, const Color& c,
+                     const raster::LineStyle& ls = {}) {
+    raster::drawLine(fb, {r.xmin, r.ymin}, {r.xmax, r.ymin}, c, ls);
+    raster::drawLine(fb, {r.xmax, r.ymin}, {r.xmax, r.ymax}, c, ls);
+    raster::drawLine(fb, {r.xmax, r.ymax}, {r.xmin, r.ymax}, c, ls);
+    raster::drawLine(fb, {r.xmin, r.ymax}, {r.xmin, r.ymin}, c, ls);
 }
 
 raster::Rect rectFrom(IPoint p1, IPoint p2) {
@@ -194,12 +196,13 @@ void PaintController::drawShape(FrameBuffer& fb, const Shape& s) const {
     }
 }
 
-void PaintController::drawClipWindow(FrameBuffer& fb) const {
+void PaintController::drawClipWindow(FrameBuffer& fb, const Color& c, bool dashed) const {
     if (!clipWin_.valid) {
         return;
     }
+    const raster::LineStyle ls = dashed ? raster::LineStyle{0xF0F0u, 1} : raster::LineStyle{};
     if (clipWin_.kind == ClipWindow::Kind::Rect) {
-        drawRectOutline(fb, clipWin_.rect, Color::White());
+        drawRectOutline(fb, clipWin_.rect, c, ls);
         return;
     }
     const auto& poly = clipWin_.poly;
@@ -208,7 +211,7 @@ void PaintController::drawClipWindow(FrameBuffer& fb) const {
         const FPoint& p2 = poly[(i + 1) % poly.size()];
         raster::drawLine(fb, {static_cast<int>(std::lround(p1.x)), static_cast<int>(std::lround(p1.y))},
                          {static_cast<int>(std::lround(p2.x)), static_cast<int>(std::lround(p2.y))},
-                         Color::White(), {});
+                         c, ls);
     }
 }
 
@@ -227,8 +230,52 @@ void PaintController::commitRender() {
     for (const auto& s : shapes_) {
         drawShape(*committed_, s);
     }
-    if (mode_ == Mode::Clip) {
-        drawClipWindow(*committed_);
+    // 裁剪窗口边框不画进提交层：它在预览层绘制（常驻裁剪时所有模式可见，且不被掩码覆盖）
+}
+
+// 常驻裁剪的显示层拷贝：窗口内照抄提交层，窗口外保持背景色（黑）。
+// 不改提交层——关掉开关，原图立即完整恢复。
+void PaintController::copyCommittedClipped(FrameBuffer& fb) const {
+    fb.clear(Color::Black());
+    if (clipWin_.kind == ClipWindow::Kind::Rect) {
+        const int x0 = std::max(0, clipWin_.rect.xmin);
+        const int x1 = std::min(fb.width() - 1, clipWin_.rect.xmax);
+        const int y0 = std::max(0, clipWin_.rect.ymin);
+        const int y1 = std::min(fb.height() - 1, clipWin_.rect.ymax);
+        for (int y = y0; y <= y1; ++y) {
+            for (int x = x0; x <= x1; ++x) {
+                fb.putPixel(x, y, committed_->pixel(x, y));
+            }
+        }
+        return;
+    }
+    // 凸多边形窗口：每条扫描线与凸多边形相交为单段 [lo, hi]，逐段拷贝
+    const auto& poly = clipWin_.poly;
+    float minY = poly.empty() ? 0.0f : poly[0].y;
+    float maxY = minY;
+    for (const auto& p : poly) {
+        minY = std::min(minY, p.y);
+        maxY = std::max(maxY, p.y);
+    }
+    const int yLo = std::max(0, static_cast<int>(std::floor(minY)));
+    const int yHi = std::min(fb.height() - 1, static_cast<int>(std::ceil(maxY)));
+    for (int y = yLo; y <= yHi; ++y) {
+        int lo = std::numeric_limits<int>::max();
+        int hi = std::numeric_limits<int>::min();
+        for (std::size_t i = 0; i < poly.size(); ++i) {
+            const FPoint& p1 = poly[i];
+            const FPoint& p2 = poly[(i + 1) % poly.size()];
+            if ((p1.y <= y) == (p2.y <= y)) {
+                continue; // 该边不跨此扫描线
+            }
+            const float t = (static_cast<float>(y) - p1.y) / (p2.y - p1.y);
+            const int x = static_cast<int>(std::lround(p1.x + (p2.x - p1.x) * t));
+            lo = std::min(lo, x);
+            hi = std::max(hi, x);
+        }
+        for (int x = std::max(0, lo); x <= std::min(fb.width() - 1, hi); ++x) {
+            fb.putPixel(x, y, committed_->pixel(x, y));
+        }
     }
 }
 
@@ -301,8 +348,29 @@ void PaintController::drawPreview(FrameBuffer& fb) const {
         }
     }
 
+    // 裁剪窗口边框（预览层）：常驻裁剪开启时所有模式可见（青色虚线）；
+    // 未开启时仅在裁剪模式显示（白色实线，作为算法演示的背景窗口）
+    if (clipWin_.valid) {
+        if (clipOn_) {
+            drawClipWindow(fb, Color::Cyan(), true);
+        } else if (mode_ == Mode::Clip) {
+            drawClipWindow(fb, Color::White(), false);
+        }
+    }
+
     // 变换模式标记：品红=各选中图形重心，青=当前参考点，黄=等待指定的参考点，橙=A 的对接点
     if (mode_ == Mode::Transform) {
+        if (bandSelect_) { // 框选橡皮筋（品红虚线）
+            const raster::Rect band = rectFrom(bandStart_, curr_);
+            raster::drawLine(fb, {band.xmin, band.ymin}, {band.xmax, band.ymin}, Color::Magenta(),
+                             {0xF0F0u, 1});
+            raster::drawLine(fb, {band.xmax, band.ymin}, {band.xmax, band.ymax}, Color::Magenta(),
+                             {0xF0F0u, 1});
+            raster::drawLine(fb, {band.xmax, band.ymax}, {band.xmin, band.ymax}, Color::Magenta(),
+                             {0xF0F0u, 1});
+            raster::drawLine(fb, {band.xmin, band.ymax}, {band.xmin, band.ymin}, Color::Magenta(),
+                             {0xF0F0u, 1});
+        }
         for (int idx : selected_) {
             if (idx < 0 || idx >= static_cast<int>(shapes_.size())) {
                 continue;
@@ -334,7 +402,11 @@ void PaintController::render(FrameBuffer& fb) {
         commitRender();
         dirty_ = false;
     }
-    fb.copyFrom(*committed_); // 提交层 → 显示层
+    if (clipOn_ && clipWin_.valid) {
+        copyCommittedClipped(fb); // 常驻裁剪：窗口外内容不显示
+    } else {
+        fb.copyFrom(*committed_); // 提交层 → 显示层
+    }
     drawPreview(fb);
     drawToolbar(fb);          // 任务栏画在最上层（UI 元素，不属于画布内容）
 }
@@ -360,6 +432,7 @@ void PaintController::onKey(int key, int action) {
     case GLFW_KEY_X: handleAction(Act::Color); break;
     case GLFW_KEY_F: handleAction(Act::PolyFill); break;
     case GLFW_KEY_M: handleAction(Act::ClipAlgo); break;
+    case GLFW_KEY_V: handleAction(Act::ClipToggle); break;
     case GLFW_KEY_K: handleAction(Act::ClipRect); break;
     case GLFW_KEY_P: handleAction(Act::ClipPoly); break;
     case GLFW_KEY_LEFT: handleAction(Act::NudgeL); break;
@@ -475,6 +548,11 @@ void PaintController::handleAction(Act a) {
             markDirty();
         }
         break;
+    case Act::ClipToggle:
+        if (clipWin_.valid) {
+            clipOn_ = !clipOn_; // 常驻裁剪开关：窗口外内容隐藏/恢复（不动提交层）
+        }
+        break;
     case Act::ScaleUp:
     case Act::ScaleDown:
         if (mode_ == Mode::Transform && !selected_.empty()) {
@@ -521,60 +599,73 @@ void PaintController::handleAction(Act a) {
 
 // ================= 自绘任务栏 =================
 
+// 任务栏总高随字体度量变化：上下 2px 边距 + 两行按钮（行高 = 字高 + 8）+ 行间 3px
+int PaintController::toolbarHeight() const {
+    const int rowH = text::height() + 8;
+    return 2 + rowH + 3 + rowH + 2;
+}
+
 void PaintController::buildToolbar(std::vector<ToolButton>& btns) const {
     btns.clear();
+    const int rowH = text::height() + 8;
+    const int y1 = 2;
+    const int y2 = 2 + rowH + 3;
     auto add = [&](Act act, const char* label, int x, int y, bool active) {
         ToolButton b;
         b.act = act;
         b.label = label;
-        b.w = static_cast<int>(text::textWidth(label)) + 8;
-        b.h = 18;
+        b.w = text::textWidth(label) + 12;
+        b.h = rowH;
         b.x = x;
         b.y = y;
         b.active = active;
         btns.push_back(b);
-        return x + b.w + 2;
+        return x + b.w + 3;
     };
 
-    // 第一行：7 个模式 + 清屏
+    // 第一行：7 个模式 + 清屏（标签保留快捷键前缀）
     const struct {
         Act act;
         const char* label;
         Mode mode;
     } modes[] = {
-        {Act::ModeLine, "1 LINE", Mode::Line},       {Act::ModeCircle, "2 CIRC", Mode::Circle},
-        {Act::ModeArc, "3 ARC", Mode::Arc},          {Act::ModePolygon, "4 POLY", Mode::Polygon},
-        {Act::ModeSeed, "5 SEED", Mode::SeedFill},   {Act::ModeClip, "6 CLIP", Mode::Clip},
-        {Act::ModeXform, "7 XFRM", Mode::Transform},
+        {Act::ModeLine, "1 直线", Mode::Line},     {Act::ModeCircle, "2 圆", Mode::Circle},
+        {Act::ModeArc, "3 圆弧", Mode::Arc},       {Act::ModePolygon, "4 多边形", Mode::Polygon},
+        {Act::ModeSeed, "5 种子", Mode::SeedFill}, {Act::ModeClip, "6 裁剪", Mode::Clip},
+        {Act::ModeXform, "7 变换", Mode::Transform},
     };
     int x = 2;
     for (const auto& m : modes) {
-        x = add(m.act, m.label, x, 2, mode_ == m.mode);
+        x = add(m.act, m.label, x, y1, mode_ == m.mode);
     }
-    add(Act::Clear, "CLR", x, 2, false);
+    x = add(Act::Clear, "E 清屏", x, y1, false);
 
     // 第二行：属性 + 随模式变化的上下文按钮
-    x = add(Act::Style, "STL", 2, 22, false);
-    x = add(Act::Width, "WID", x, 22, false);
-    x = add(Act::Color, "COL", x, 22, false);
+    x = add(Act::Style, "S 线型", 2, y2, false);
+    x = add(Act::Width, "W 线宽", x, y2, false);
+    x = add(Act::Color, "X 颜色", x, y2, false);
     if (mode_ == Mode::Polygon) {
-        x = add(Act::PolyFill, polygonFilled_ ? "FILL:ON" : "FILL:OFF", x + 8, 22, true);
-        add(Act::PolyClose, "CLOSE", x, 22, false);
+        x = add(Act::PolyFill, polygonFilled_ ? "F 填充:开" : "F 填充:关", x + 8, y2, true);
+        x = add(Act::PolyClose, "右键闭合", x, y2, false);
     } else if (mode_ == Mode::Clip) {
-        x = add(Act::ClipRect, "RECTWIN", x + 8, 22, false);
-        x = add(Act::ClipPoly, "POLYWIN", x, 22, false);
-        add(Act::ClipAlgo, "ALGO", x, 22, false);
+        x = add(Act::ClipRect, "K 矩形窗", x + 8, y2, false);
+        x = add(Act::ClipPoly, "P 多边形窗", x, y2, false);
+        x = add(Act::ClipAlgo, "M 算法", x, y2, false);
     } else if (mode_ == Mode::Transform) {
-        x = add(Act::ScaleUp, "+", x + 8, 22, false);
-        x = add(Act::ScaleDown, "-", x, 22, false);
-        x = add(Act::RotCCW, "ROTL", x, 22, false);
-        x = add(Act::RotCW, "ROTR", x, 22, false);
-        x = add(Act::RefPoint, "REF", x, 22, refManual_);
-        x = add(Act::Dock, "DOCK", x, 22, dockStage_ > 0);
-        x = add(Act::NudgeL, "<", x, 22, false);
-        x = add(Act::NudgeR, ">", x, 22, false);
-        x = add(Act::NudgeU, "^", x, 22, false);
-        add(Act::NudgeD, "v", x, 22, false);
+        x = add(Act::ScaleUp, "+", x + 8, y2, false);
+        x = add(Act::ScaleDown, "-", x, y2, false);
+        x = add(Act::RotCCW, "R 逆旋", x, y2, false);
+        x = add(Act::RotCW, "T 顺旋", x, y2, false);
+        x = add(Act::RefPoint, "G 参考点", x, y2, refManual_);
+        x = add(Act::Dock, "J 对接", x, y2, dockStage_ > 0);
+        x = add(Act::NudgeL, "←", x, y2, false);
+        x = add(Act::NudgeR, "→", x, y2, false);
+        x = add(Act::NudgeU, "↑", x, y2, false);
+        x = add(Act::NudgeD, "↓", x, y2, false);
+    }
+    // 常驻裁剪开关：定义过裁剪窗口后所有模式都显示（V 键同效）
+    if (clipWin_.valid) {
+        add(Act::ClipToggle, clipOn_ ? "V 裁剪:开" : "V 裁剪:关", x + 8, y2, clipOn_);
     }
 }
 
@@ -583,7 +674,8 @@ void PaintController::drawToolbar(FrameBuffer& fb) const {
     const Color kFace(58, 58, 70);
     const Color kActive(70, 110, 180);
     const Color kBorder(120, 120, 130);
-    for (int y = 0; y < kToolbarH && y < fb.height(); ++y) {
+    const int tbH = toolbarHeight();
+    for (int y = 0; y < tbH && y < fb.height(); ++y) {
         for (int x = 0; x < fb.width(); ++x) {
             fb.putPixel(x, y, kBg);
         }
@@ -604,14 +696,15 @@ void PaintController::drawToolbar(FrameBuffer& fb) const {
             fb.putPixel(b.x, y, kBorder);
             fb.putPixel(b.x + b.w - 1, y, kBorder);
         }
-        const int tx = b.x + (b.w - static_cast<int>(text::textWidth(b.label.c_str()))) / 2 + 1;
-        const int ty = b.y + (b.h - text::kGlyphRows) / 2 + 1;
+        const int tx = b.x + (b.w - text::textWidth(b.label.c_str())) / 2 + 1;
+        const int ty = b.y + (b.h - text::height()) / 2;
         text::drawText(fb, tx, ty, b.label.c_str(), Color(230, 230, 235));
     }
 }
 
 bool PaintController::toolbarPress(IPoint p) {
-    if (p.y >= kToolbarH) {
+    const int tbH = toolbarHeight();
+    if (p.y >= tbH) {
         return false;
     }
     std::vector<ToolButton> btns;
@@ -623,7 +716,7 @@ bool PaintController::toolbarPress(IPoint p) {
             return true;
         }
     }
-    return p.y < kToolbarH; // 点在栏上但没点中按钮：吞掉事件，不落到画布
+    return p.y < tbH; // 点在栏上但没点中按钮：吞掉事件，不落到画布
 }
 
 void PaintController::closePolygon() {
@@ -648,6 +741,7 @@ void PaintController::setRectClipWindow(IPoint p1, IPoint p2) {
     clipWin_.kind = ClipWindow::Kind::Rect;
     clipWin_.rect = r;
     clipWin_.valid = true;
+    clipOn_ = true; // 显式定义窗口 → 常驻裁剪自动开启
     markDirty();
 }
 
@@ -777,6 +871,75 @@ int PaintController::hitShape(IPoint p) const {
     return -1;
 }
 
+// 框选：图形是否与矩形相交。线段/多边形边按 ~4px 步进采样，圆用解析法（圆心到矩形
+// 最近点的距离 ≤ 半径，含"圆整个包住矩形"），弧在角度范围内采样。
+bool PaintController::shapeIntersectsRect(const Shape& s, const raster::Rect& r) const {
+    auto inRect = [&](IPoint p) {
+        return p.x >= r.xmin && p.x <= r.xmax && p.y >= r.ymin && p.y <= r.ymax;
+    };
+    auto segHits = [&](IPoint a, IPoint b) {
+        if (inRect(a) || inRect(b)) {
+            return true;
+        }
+        const int steps = std::max(1, (std::abs(b.x - a.x) + std::abs(b.y - a.y)) / 4);
+        for (int k = 1; k < steps; ++k) {
+            const IPoint p{a.x + (b.x - a.x) * k / steps, a.y + (b.y - a.y) * k / steps};
+            if (inRect(p)) {
+                return true;
+            }
+        }
+        return false;
+    };
+    switch (s.mode) {
+    case Mode::Line:
+        return segHits(s.a, s.b);
+    case Mode::Circle: {
+        const int cx = std::max(r.xmin, std::min(s.a.x, r.xmax));
+        const int cy = std::max(r.ymin, std::min(s.a.y, r.ymax));
+        const int dx = s.a.x - cx;
+        const int dy = s.a.y - cy;
+        return dx * dx + dy * dy <= s.radius * s.radius;
+    }
+    case Mode::Arc: {
+        const float span = normDeg(s.endDeg - s.startDeg);
+        const int n = span <= 0.0f ? 64 : std::max(1, static_cast<int>(span / 5.0f));
+        for (int k = 0; k <= n; ++k) {
+            const float deg = s.startDeg + span * static_cast<float>(k) / static_cast<float>(n);
+            const float rad = deg * kPiF / 180.0f;
+            const IPoint p{s.a.x + static_cast<int>(std::lround(std::cos(rad) * s.radius)),
+                           s.a.y + static_cast<int>(std::lround(std::sin(rad) * s.radius))};
+            if (inRect(p)) {
+                return true;
+            }
+        }
+        return false;
+    }
+    case Mode::Polygon: {
+        for (const auto& p : s.polygon) {
+            if (inRect(p)) {
+                return true;
+            }
+        }
+        const IPoint corners[4] = {{r.xmin, r.ymin}, {r.xmax, r.ymin}, {r.xmax, r.ymax},
+                                   {r.xmin, r.ymax}};
+        for (const auto& c : corners) {
+            if (pointInPolygon(c, s.polygon)) {
+                return true; // 矩形整个落在多边形内部
+            }
+        }
+        const int n = static_cast<int>(s.polygon.size());
+        for (int k = 0; k < n; ++k) {
+            if (segHits(s.polygon[k], s.polygon[(k + 1) % n])) {
+                return true;
+            }
+        }
+        return false;
+    }
+    default:
+        return false;
+    }
+}
+
 // 点击点吸附到某图形轮廓的最近点，同时给出该点的单位切向（对接拼接用）
 int PaintController::pickOutlineShape(IPoint p, FPoint& outPt, FPoint& outTan, int skipIdx) const {
     for (int i = static_cast<int>(shapes_.size()) - 1; i >= 0; --i) {
@@ -869,6 +1032,7 @@ void PaintController::cancelInProgress() {
     clipRectEdit_ = false;
     clipPolyEdit_ = false;
     xformDrag_ = false;
+    bandSelect_ = false;
     refPick_ = false;
     dockStage_ = 0;
     dockAShapeIdx_ = -1;
@@ -898,6 +1062,7 @@ void PaintController::onMouseButton(int button, int action, int mods) {
                     clipWin_.poly.push_back({static_cast<float>(p.x), static_cast<float>(p.y)});
                 }
                 clipWin_.valid = true;
+                clipOn_ = true; // 显式定义窗口 → 常驻裁剪自动开启
                 markDirty();
             }
             pendingClipWin_.clear();
@@ -1084,14 +1249,35 @@ void PaintController::onMouseButton(int button, int action, int mods) {
                     xformDrag_ = true;
                     lastDrag_ = curr_;
                 }
-            } else { // 点空白：清除选中
-                if (!selected_.empty()) {
+            } else { // 点空白：进入框选拖拽，松开时结算（原地微点=清除选中）
+                bandSelect_ = true;
+                bandStart_ = curr_;
+            }
+        } else {
+            xformDrag_ = false;
+            if (bandSelect_) {
+                bandSelect_ = false;
+                const raster::Rect band = rectFrom(bandStart_, curr_);
+                if (band.xmax - band.xmin >= 4 || band.ymax - band.ymin >= 4) {
+                    // 框选：与矩形相交的可选图形全部选中；Shift=叠加，否则替换
+                    if (!shiftHeld_) {
+                        selected_.clear();
+                    }
+                    for (int i = 0; i < static_cast<int>(shapes_.size()); ++i) {
+                        if (!shapeSelectable(shapes_[i]) ||
+                            !shapeIntersectsRect(shapes_[i], band)) {
+                            continue;
+                        }
+                        if (std::find(selected_.begin(), selected_.end(), i) == selected_.end()) {
+                            selected_.push_back(i);
+                        }
+                    }
+                    markDirty();
+                } else if (!selected_.empty()) { // 原地微点：清除选中
                     selected_.clear();
                     markDirty();
                 }
             }
-        } else {
-            xformDrag_ = false;
         }
         break;
     }
@@ -1147,7 +1333,7 @@ std::string PaintController::title() const {
         t += std::to_string(selected_.size());
         t += " 参考点:";
         t += refManual_ ? "指定" : "重心";
-        t += " | 左键选(Shift加选) 拖拽/方向键平移 +−缩放 R/T旋转 G参考点 J对接";
+        t += " | 左键选(Shift加选) 空白拖拽框选 拖拽/方向键平移 +−缩放 R/T旋转 G参考点 J对接";
         if (refPick_) {
             t += " | 点击画布指定参考点";
         }
@@ -1158,6 +1344,9 @@ std::string PaintController::title() const {
             t += " | 对接:点击图形B轮廓完成拼接（右键取消）";
         }
         break;
+    }
+    if (clipOn_ && clipWin_.valid) {
+        t += " | 裁剪:开（V 关，窗口外内容隐藏）";
     }
     return t;
 }

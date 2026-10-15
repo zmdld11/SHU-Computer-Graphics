@@ -30,6 +30,30 @@ public:
     // 窗口标题（当前模式/属性/快捷键提示）
     std::string title() const;
 
+    // ---- 自绘任务栏（无界面框架，全部经 putPixel 绘制；键盘与按钮共用 handleAction） ----
+    // 操作与按钮描述放在 public：测试按标签定位按钮中心再模拟点击，布局变化不破坏用例
+    enum class Act {
+        None = 0,
+        ModeLine, ModeCircle, ModeArc, ModePolygon, ModeSeed, ModeClip, ModeXform,
+        Style, Width, Color, Clear,
+        PolyFill, PolyClose,
+        ClipRect, ClipPoly, ClipAlgo, ClipToggle,
+        ScaleUp, ScaleDown, RotCW, RotCCW, RefPoint, Dock,
+        NudgeL, NudgeR, NudgeU, NudgeD,
+    };
+    struct ToolButton {
+        Act act = Act::None;
+        std::string label;
+        int x = 0, y = 0, w = 0, h = 0;
+        bool active = false; // 当前模式/状态高亮
+    };
+    std::vector<ToolButton> toolbarButtons() const { // 当前按钮布局快照
+        std::vector<ToolButton> btns;
+        buildToolbar(btns);
+        return btns;
+    }
+    int toolbarHeight() const; // 任务栏总高（随字体度量动态计算）
+
 private:
     enum class Mode { Line = 0, Circle = 1, Arc = 2, Polygon = 3, SeedFill = 4, Clip = 5,
                       Transform = 6 };
@@ -57,30 +81,14 @@ private:
         bool valid = false;
     };
 
-    // ---- 自绘任务栏（无界面框架，全部经 putPixel 绘制；键盘与按钮共用 handleAction） ----
-    enum class Act {
-        None = 0,
-        ModeLine, ModeCircle, ModeArc, ModePolygon, ModeSeed, ModeClip, ModeXform,
-        Style, Width, Color, Clear,
-        PolyFill, PolyClose,
-        ClipRect, ClipPoly, ClipAlgo,
-        ScaleUp, ScaleDown, RotCW, RotCCW, RefPoint, Dock,
-        NudgeL, NudgeR, NudgeU, NudgeD,
-    };
-    struct ToolButton {
-        Act act = Act::None;
-        std::string label;
-        int x = 0, y = 0, w = 0, h = 0;
-        bool active = false; // 当前模式/状态高亮
-    };
-
     // ---- 绘制 ----
     raster::LineStyle currentStyle() const;
     Color currentFillColor() const;
     void drawShape(FrameBuffer& fb, const Shape& s) const;
-    void drawClipWindow(FrameBuffer& fb) const;
+    void drawClipWindow(FrameBuffer& fb, const Color& c, bool dashed) const;
     void drawPreview(FrameBuffer& fb) const;
     void commitRender(); // 图形列表 → committed_
+    void copyCommittedClipped(FrameBuffer& fb) const; // 常驻裁剪：窗口内照抄，窗口外保持背景
     bool clipLine(IPoint& a, IPoint& b) const;
     const char* clipAlgoName() const;
 
@@ -92,6 +100,7 @@ private:
     void transformSelected(const geom::Mat3& m, float rotDeg, float scaleF);
     static void applyToShape(Shape& s, const geom::Mat3& m, float rotDeg, float scaleF);
     int hitShape(IPoint p) const;                  // 返回命中的图形下标，无命中 -1
+    bool shapeIntersectsRect(const Shape& s, const raster::Rect& r) const; // 框选：图形与矩形相交
     // 点击点吸附到某图形轮廓的最近点（对接点），返回该图形下标；skipIdx 用于选 B 时跳过 A
     int pickOutlineShape(IPoint p, FPoint& outPt, FPoint& outTan, int skipIdx = -1) const;
 
@@ -106,7 +115,6 @@ private:
     void buildToolbar(std::vector<ToolButton>& btns) const;
     void drawToolbar(FrameBuffer& fb) const;
     bool toolbarPress(IPoint p);                     // 命中按钮则执行并返回 true
-    static constexpr int kToolbarH = 46;             // 顶部任务栏总高（像素）
 
     Mode mode_ = Mode::Line;
     int styleIdx_ = 0;     // 0/1/2 → 实线/虚线/点线
@@ -127,6 +135,7 @@ private:
 
     // 裁剪状态
     ClipWindow clipWin_;
+    bool clipOn_ = false;       // 常驻裁剪开关：开=所有模式只显示窗口内内容（V/任务栏切换）
     int clipAlgoIdx_ = 0;       // 0=C-S，1=中点分割（矩形窗口时有效）
     bool clipRectEdit_ = false; // K：拖拽定义矩形窗口
     bool clipPolyEdit_ = false; // P：连点定义凸多边形窗口
@@ -137,6 +146,8 @@ private:
     bool shiftHeld_ = false;     // 最近一次鼠标事件是否带 Shift（多选）
     bool xformDrag_ = false;     // 拖拽平移进行中
     IPoint lastDrag_{};          // 上一次增量平移的参考位置
+    bool bandSelect_ = false;    // 框选拖拽进行中（空白处按下）
+    IPoint bandStart_{};         // 框选起点
     bool refManual_ = false;     // 参考点：false=重心（默认） true=手动指定
     bool refPick_ = false;       // 等待左键点击指定参考点
     IPoint refPoint_{};          // 手动参考点
