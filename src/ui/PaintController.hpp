@@ -30,6 +30,30 @@ public:
     // 窗口标题（当前模式/属性/快捷键提示）
     std::string title() const;
 
+    // ---- 自绘任务栏（无界面框架，全部经 putPixel 绘制；键盘与按钮共用 handleAction） ----
+    // 操作与按钮描述放在 public：测试按标签定位按钮中心再模拟点击，布局变化不破坏用例
+    enum class Act {
+        None = 0,
+        ModeLine, ModeCircle, ModeArc, ModePolygon, ModeSeed, ModeClip, ModeXform,
+        Style, Width, Color, Clear,
+        PolyFill, PolyClose,
+        ClipRect, ClipPoly, ClipAlgo, ClipToggle,
+        ScaleUp, ScaleDown, RotCW, RotCCW, RefPoint, Dock,
+        NudgeL, NudgeR, NudgeU, NudgeD,
+    };
+    struct ToolButton {
+        Act act = Act::None;
+        std::string label;
+        int x = 0, y = 0, w = 0, h = 0;
+        bool active = false; // 当前模式/状态高亮
+    };
+    std::vector<ToolButton> toolbarButtons() const { // 当前按钮布局快照
+        std::vector<ToolButton> btns;
+        buildToolbar(btns);
+        return btns;
+    }
+    int toolbarHeight() const; // 任务栏总高（随字体度量动态计算）
+
 private:
     enum class Mode { Line = 0, Circle = 1, Arc = 2, Polygon = 3, SeedFill = 4, Clip = 5,
                       Transform = 6 };
@@ -55,23 +79,6 @@ private:
         raster::Rect rect;
         std::vector<FPoint> poly;
         bool valid = false;
-    };
-
-    // ---- 自绘任务栏（无界面框架，全部经 putPixel 绘制；键盘与按钮共用 handleAction） ----
-    enum class Act {
-        None = 0,
-        ModeLine, ModeCircle, ModeArc, ModePolygon, ModeSeed, ModeClip, ModeXform,
-        Style, Width, Color, Clear,
-        PolyFill, PolyClose,
-        ClipRect, ClipPoly, ClipAlgo, ClipToggle,
-        ScaleUp, ScaleDown, RotCW, RotCCW, RefPoint, Dock,
-        NudgeL, NudgeR, NudgeU, NudgeD,
-    };
-    struct ToolButton {
-        Act act = Act::None;
-        std::string label;
-        int x = 0, y = 0, w = 0, h = 0;
-        bool active = false; // 当前模式/状态高亮
     };
 
     // ---- 绘制 ----
@@ -108,7 +115,6 @@ private:
     void buildToolbar(std::vector<ToolButton>& btns) const;
     void drawToolbar(FrameBuffer& fb) const;
     bool toolbarPress(IPoint p);                     // 命中按钮则执行并返回 true
-    static constexpr int kToolbarH = 46;             // 顶部任务栏总高（像素）
 
     Mode mode_ = Mode::Line;
     int styleIdx_ = 0;     // 0/1/2 → 实线/虚线/点线

@@ -2,7 +2,7 @@
 // 实现交互控制器：把鼠标键盘事件翻译成绘图/填充/裁剪操作，两层渲染（提交层缓存 + 每帧预览），最终像素交给 FrameBuffer。
 #include "ui/PaintController.hpp"
 #include "raster/Fill.hpp"
-#include "ui/Font5x7.hpp"
+#include "ui/Text.hpp"
 #include <GLFW/glfw3.h>
 #include <algorithm>
 #include <cmath>
@@ -599,64 +599,73 @@ void PaintController::handleAction(Act a) {
 
 // ================= 自绘任务栏 =================
 
+// 任务栏总高随字体度量变化：上下 2px 边距 + 两行按钮（行高 = 字高 + 8）+ 行间 3px
+int PaintController::toolbarHeight() const {
+    const int rowH = text::height() + 8;
+    return 2 + rowH + 3 + rowH + 2;
+}
+
 void PaintController::buildToolbar(std::vector<ToolButton>& btns) const {
     btns.clear();
+    const int rowH = text::height() + 8;
+    const int y1 = 2;
+    const int y2 = 2 + rowH + 3;
     auto add = [&](Act act, const char* label, int x, int y, bool active) {
         ToolButton b;
         b.act = act;
         b.label = label;
-        b.w = static_cast<int>(text::textWidth(label)) + 8;
-        b.h = 18;
+        b.w = text::textWidth(label) + 12;
+        b.h = rowH;
         b.x = x;
         b.y = y;
         b.active = active;
         btns.push_back(b);
-        return x + b.w + 2;
+        return x + b.w + 3;
     };
 
-    // 第一行：7 个模式 + 清屏
+    // 第一行：7 个模式 + 清屏（标签保留快捷键前缀）
     const struct {
         Act act;
         const char* label;
         Mode mode;
     } modes[] = {
-        {Act::ModeLine, "1 LINE", Mode::Line},       {Act::ModeCircle, "2 CIRC", Mode::Circle},
-        {Act::ModeArc, "3 ARC", Mode::Arc},          {Act::ModePolygon, "4 POLY", Mode::Polygon},
-        {Act::ModeSeed, "5 SEED", Mode::SeedFill},   {Act::ModeClip, "6 CLIP", Mode::Clip},
-        {Act::ModeXform, "7 XFRM", Mode::Transform},
+        {Act::ModeLine, "1 直线", Mode::Line},     {Act::ModeCircle, "2 圆", Mode::Circle},
+        {Act::ModeArc, "3 圆弧", Mode::Arc},       {Act::ModePolygon, "4 多边形", Mode::Polygon},
+        {Act::ModeSeed, "5 种子", Mode::SeedFill}, {Act::ModeClip, "6 裁剪", Mode::Clip},
+        {Act::ModeXform, "7 变换", Mode::Transform},
     };
     int x = 2;
     for (const auto& m : modes) {
-        x = add(m.act, m.label, x, 2, mode_ == m.mode);
+        x = add(m.act, m.label, x, y1, mode_ == m.mode);
     }
-    add(Act::Clear, "CLR", x, 2, false);
+    x = add(Act::Clear, "E 清屏", x, y1, false);
 
     // 第二行：属性 + 随模式变化的上下文按钮
-    x = add(Act::Style, "STL", 2, 22, false);
-    x = add(Act::Width, "WID", x, 22, false);
-    x = add(Act::Color, "COL", x, 22, false);
+    x = add(Act::Style, "S 线型", 2, y2, false);
+    x = add(Act::Width, "W 线宽", x, y2, false);
+    x = add(Act::Color, "X 颜色", x, y2, false);
     if (mode_ == Mode::Polygon) {
-        x = add(Act::PolyFill, polygonFilled_ ? "FILL:ON" : "FILL:OFF", x + 8, 22, true);
-        x = add(Act::PolyClose, "CLOSE", x, 22, false);
+        x = add(Act::PolyFill, polygonFilled_ ? "F 填充:开" : "F 填充:关", x + 8, y2, true);
+        x = add(Act::PolyClose, "右键闭合", x, y2, false);
     } else if (mode_ == Mode::Clip) {
-        x = add(Act::ClipRect, "RECTWIN", x + 8, 22, false);
-        x = add(Act::ClipPoly, "POLYWIN", x, 22, false);
-        x = add(Act::ClipAlgo, "ALGO", x, 22, false);
+        x = add(Act::ClipRect, "K 矩形窗", x + 8, y2, false);
+        x = add(Act::ClipPoly, "P 多边形窗", x, y2, false);
+        x = add(Act::ClipAlgo, "M 算法", x, y2, false);
     } else if (mode_ == Mode::Transform) {
-        x = add(Act::ScaleUp, "+", x + 8, 22, false);
-        x = add(Act::ScaleDown, "-", x, 22, false);
-        x = add(Act::RotCCW, "ROTL", x, 22, false);
-        x = add(Act::RotCW, "ROTR", x, 22, false);
-        x = add(Act::RefPoint, "REF", x, 22, refManual_);
-        x = add(Act::Dock, "DOCK", x, 22, dockStage_ > 0);
-        x = add(Act::NudgeL, "<", x, 22, false);
-        x = add(Act::NudgeR, ">", x, 22, false);
-        x = add(Act::NudgeU, "^", x, 22, false);
-        x = add(Act::NudgeD, "v", x, 22, false);
+        x = add(Act::ScaleUp, "+", x + 8, y2, false);
+        x = add(Act::ScaleDown, "-", x, y2, false);
+        x = add(Act::RotCCW, "R 逆旋", x, y2, false);
+        x = add(Act::RotCW, "T 顺旋", x, y2, false);
+        x = add(Act::RefPoint, "G 参考点", x, y2, refManual_);
+        x = add(Act::Dock, "J 对接", x, y2, dockStage_ > 0);
+        x = add(Act::NudgeL, "←", x, y2, false);
+        x = add(Act::NudgeR, "→", x, y2, false);
+        x = add(Act::NudgeU, "↑", x, y2, false);
+        x = add(Act::NudgeD, "↓", x, y2, false);
     }
     // 常驻裁剪开关：定义过裁剪窗口后所有模式都显示（V 键同效）
     if (clipWin_.valid) {
-        add(Act::ClipToggle, clipOn_ ? "CLIP:ON" : "CLIP:OFF", x + 8, 22, clipOn_);
+        add(Act::ClipToggle, clipOn_ ? "V 裁剪:开" : "V 裁剪:关", x + 8, y2, clipOn_);
     }
 }
 
@@ -665,7 +674,8 @@ void PaintController::drawToolbar(FrameBuffer& fb) const {
     const Color kFace(58, 58, 70);
     const Color kActive(70, 110, 180);
     const Color kBorder(120, 120, 130);
-    for (int y = 0; y < kToolbarH && y < fb.height(); ++y) {
+    const int tbH = toolbarHeight();
+    for (int y = 0; y < tbH && y < fb.height(); ++y) {
         for (int x = 0; x < fb.width(); ++x) {
             fb.putPixel(x, y, kBg);
         }
@@ -686,14 +696,15 @@ void PaintController::drawToolbar(FrameBuffer& fb) const {
             fb.putPixel(b.x, y, kBorder);
             fb.putPixel(b.x + b.w - 1, y, kBorder);
         }
-        const int tx = b.x + (b.w - static_cast<int>(text::textWidth(b.label.c_str()))) / 2 + 1;
-        const int ty = b.y + (b.h - text::kGlyphRows) / 2 + 1;
+        const int tx = b.x + (b.w - text::textWidth(b.label.c_str())) / 2 + 1;
+        const int ty = b.y + (b.h - text::height()) / 2;
         text::drawText(fb, tx, ty, b.label.c_str(), Color(230, 230, 235));
     }
 }
 
 bool PaintController::toolbarPress(IPoint p) {
-    if (p.y >= kToolbarH) {
+    const int tbH = toolbarHeight();
+    if (p.y >= tbH) {
         return false;
     }
     std::vector<ToolButton> btns;
@@ -705,7 +716,7 @@ bool PaintController::toolbarPress(IPoint p) {
             return true;
         }
     }
-    return p.y < kToolbarH; // 点在栏上但没点中按钮：吞掉事件，不落到画布
+    return p.y < tbH; // 点在栏上但没点中按钮：吞掉事件，不落到画布
 }
 
 void PaintController::closePolygon() {

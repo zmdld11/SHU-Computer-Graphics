@@ -35,10 +35,16 @@ add_executable(cg-engine
     src/tests/SmokeChecks.cpp
     src/ui/Window.cpp
     src/ui/PaintController.cpp
+    src/ui/Text.cpp
 )
 
 target_include_directories(cg-engine PRIVATE src)
 target_link_libraries(cg-engine PRIVATE glfw)
+
+# ui/Text 用 GDI 把系统字体栅格化成点阵（GetGlyphOutlineW 在 gdi32）
+if(WIN32)
+    target_link_libraries(cg-engine PRIVATE gdi32)
+endif()
 
 if(MSVC)
     target_compile_options(cg-engine PRIVATE /W4)

@@ -662,35 +662,75 @@ int runAlgorithmSelfChecks() {
         FrameBuffer canvas(kWidth, kHeight);
 
         ctrl.render(canvas);
-        expect(canvas.pixel(400, 10) == Color(34, 34, 40), "tb: 顶部任务栏背景已绘制");
+        // 按标签定位按钮中心并点击——布局随字体度量变化，断言不写死坐标
+        auto clickBtn = [&](const char* label) {
+            for (const auto& b : ctrl.toolbarButtons()) {
+                if (b.label == label) {
+                    ctrl.onMouseMove({b.x + b.w / 2, b.y + b.h / 2});
+                    ctrl.onMouseButton(0, GLFW_PRESS);
+                    ctrl.onMouseButton(0, GLFW_RELEASE);
+                    return true;
+                }
+            }
+            return false;
+        };
 
-        // 点击 "7 XFRM" 按钮（布局同 buildToolbar：第 7 个模式按钮，中心 ≈ (294,11)）
-        ctrl.onMouseMove({294, 11});
-        ctrl.onMouseButton(0, GLFW_PRESS);
-        ctrl.onMouseButton(0, GLFW_RELEASE);
+        const int tbH = ctrl.toolbarHeight();
+        expect(canvas.pixel(799, tbH - 3) == Color(34, 34, 40), "tb: 顶部任务栏背景已绘制");
+
+        // "7 变换" 按钮内应存在浅色文字像素（系统字体/回退点阵都在按钮框内绘制）
+        bool hasText = false;
+        for (const auto& b : ctrl.toolbarButtons()) {
+            if (b.label != "7 变换") {
+                continue;
+            }
+            for (int y = b.y; y < b.y + b.h && !hasText; ++y) {
+                for (int x = b.x; x < b.x + b.w; ++x) {
+                    if (canvas.pixel(x, y) == Color(230, 230, 235)) {
+                        hasText = true;
+                        break;
+                    }
+                }
+            }
+        }
+        expect(hasText, "tb: 按钮文字已渲染");
+
+        expect(clickBtn("7 变换"), "tb: 找到模式按钮");
         expect(ctrl.title().find("变换") != std::string::npos, "tb: 点击按钮切换到变换模式");
+        expect(clickBtn("G 参考点"), "tb: 找到参考点按钮");
+        expect(ctrl.title().find("指定") != std::string::npos, "tb: 参考点按钮切为指定");
 
-        // 点击第二行 "REF"（变换模式上下文按钮，中心 ≈ (205,31)）→ 参考点切为"指定"
-        ctrl.onMouseMove({205, 31});
-        ctrl.onMouseButton(0, GLFW_PRESS);
-        ctrl.onMouseButton(0, GLFW_RELEASE);
-        expect(ctrl.title().find("指定") != std::string::npos, "tb: REF 按钮切换参考点到指定");
-
-        // CLR 清屏：先画圆，再点第一行 "CLR"（中心 ≈ (331,11)）
+        // E 清屏：先画圆，再点 "E 清屏"
         ctrl.onKey(GLFW_KEY_2, GLFW_PRESS);
         ctrl.onMouseMove({400, 450});
         ctrl.onMouseButton(0, GLFW_PRESS);
         ctrl.onMouseMove({450, 450});
         ctrl.onMouseButton(0, GLFW_RELEASE);
-        ctrl.onMouseMove({331, 11});
-        ctrl.onMouseButton(0, GLFW_PRESS);
-        ctrl.onMouseButton(0, GLFW_RELEASE);
+        expect(clickBtn("E 清屏"), "tb: 找到清屏按钮");
         ctrl.onMouseMove({700, 550});
         ctrl.render(canvas);
-        expect(canvas.pixel(450, 450) == Color::Black(), "tb: CLR 按钮清屏");
+        expect(canvas.pixel(450, 450) == Color::Black(), "tb: 清屏按钮清屏");
     }
 
     return fails;
+}
+
+bool writePPM(const char* path, const FrameBuffer& fb) {
+    std::ofstream out(path, std::ios::binary);
+    if (!out) {
+        std::cerr << "[demo] 无法写入 " << path << std::endl;
+        return false;
+    }
+    out << "P6\n" << fb.width() << " " << fb.height() << "\n255\n";
+    for (int y = 0; y < fb.height(); ++y) {
+        for (int x = 0; x < fb.width(); ++x) {
+            const Color c = fb.pixel(x, y);
+            out.put(static_cast<char>(c.r));
+            out.put(static_cast<char>(c.g));
+            out.put(static_cast<char>(c.b));
+        }
+    }
+    return out.good();
 }
 
 bool writeDemoImage(const char* path) {
@@ -740,21 +780,7 @@ bool writeDemoImage(const char* path) {
         }
     }
 
-    std::ofstream out(path, std::ios::binary);
-    if (!out) {
-        std::cerr << "[demo] 无法写入 " << path << std::endl;
-        return false;
-    }
-    out << "P6\n" << fb.width() << " " << fb.height() << "\n255\n";
-    for (int y = 0; y < fb.height(); ++y) {
-        for (int x = 0; x < fb.width(); ++x) {
-            const Color c = fb.pixel(x, y);
-            out.put(static_cast<char>(c.r));
-            out.put(static_cast<char>(c.g));
-            out.put(static_cast<char>(c.b));
-        }
-    }
-    return out.good();
+    return writePPM(path, fb);
 }
 
 } // namespace cg::tests
