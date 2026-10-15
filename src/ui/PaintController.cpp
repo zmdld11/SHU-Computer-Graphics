@@ -1,6 +1,8 @@
 // PaintController.cpp
 // 实现交互控制器：把鼠标键盘事件翻译成绘图/填充/裁剪操作，两层渲染（提交层缓存 + 每帧预览），最终像素交给 FrameBuffer。
 #include "ui/PaintController.hpp"
+#include "curves/Bezier.hpp"
+#include "curves/BSpline.hpp"
 #include "raster/Fill.hpp"
 #include "ui/Text.hpp"
 #include <GLFW/glfw3.h>
@@ -14,7 +16,9 @@ namespace {
 constexpr unsigned kMasks[3] = {0xFFFFu, 0xF0F0u, 0x8888u}; // 实线/虚线/点线的像素掩码
 constexpr int kWidths[3] = {1, 3, 5};
 constexpr const char* kStyleNames[3] = {"实线", "虚线", "点线"};
-constexpr const char* kModeNames[7] = {"直线", "圆", "圆弧", "多边形", "种子填充", "裁剪", "变换"};
+constexpr const char* kModeNames[8] = {"直线", "圆", "圆弧", "多边形", "种子填充", "裁剪", "变换",
+                                       "曲线"};
+constexpr int kCurveSegments = 128; // 曲线采样段数：折线足够光滑且确定性可测
 constexpr const char* kClipAlgoNames[2] = {"Cohen-Sutherland", "中点分割"};
 constexpr const char* kPaletteNames[6] = {"黄", "青", "品红", "绿", "橙", "红"};
 const Color kPalette[6] = {Color::Yellow(), Color::Cyan(),  Color::Magenta(),
@@ -191,6 +195,14 @@ void PaintController::drawShape(FrameBuffer& fb, const Shape& s) const {
         }
         break;
     }
+    case Mode::Curve: {
+        // 曲线 = 采样折线逐段落像素，沿用线型/线宽属性
+        const std::vector<FPoint> samples = curveSamples(s);
+        for (std::size_t i = 0; i + 1 < samples.size(); ++i) {
+            raster::drawLine(fb, roundPt(samples[i]), roundPt(samples[i + 1]), s.color, s.style);
+        }
+        break;
+    }
     case Mode::Transform:
         break; // 变换模式没有"图形"本体（选中/参考点标记画在预览层）
     }
@@ -308,7 +320,8 @@ void PaintController::drawPreview(FrameBuffer& fb) const {
         case Mode::Polygon:
         case Mode::SeedFill:
         case Mode::Transform:
-            break;
+        case Mode::Curve:
+            break; // 曲线不用拖拽预览（输入预览/控制点手柄在本函数后面单独画）
         }
     }
 
@@ -345,6 +358,34 @@ void PaintController::drawPreview(FrameBuffer& fb) const {
         }
         for (const auto& p : pendingClipWin_) {
             drawCross(fb, p, Color::Cyan(), 3);
+        }
+    }
+
+    // 曲线模式：已提交曲线的控制多边形与手柄（控制点可抓取）
+    if (mode_ == Mode::Curve) {
+        drawCurveHandles(fb);
+    }
+
+    // 曲线输入：控制多边形橡皮筋 + 以光标作临时末控制点的曲线实时预览
+    if (mode_ == Mode::Curve && !pendingCurve_.empty()) {
+        for (std::size_t i = 0; i + 1 < pendingCurve_.size(); ++i) {
+            raster::drawLine(fb, pendingCurve_[i], pendingCurve_[i + 1], Color::White(), {});
+        }
+        raster::drawLine(fb, pendingCurve_.back(), curr_, Color::White(), {});
+        for (const auto& p : pendingCurve_) {
+            drawCross(fb, p, Color::White(), 3);
+        }
+        std::vector<FPoint> pts;
+        pts.reserve(pendingCurve_.size() + 1);
+        for (const auto& p : pendingCurve_) {
+            pts.push_back(toF(p));
+        }
+        pts.push_back(toF(curr_));
+        const std::vector<FPoint> samples =
+            curveBSpline_ ? curves::sampleBSpline(pts, 3, 64) : curves::sampleBezier(pts, 64);
+        for (std::size_t i = 0; i + 1 < samples.size(); ++i) {
+            raster::drawLine(fb, roundPt(samples[i]), roundPt(samples[i + 1]), Color::Yellow(),
+                             currentStyle());
         }
     }
 
@@ -427,6 +468,8 @@ void PaintController::onKey(int key, int action) {
     case GLFW_KEY_5: handleAction(Act::ModeSeed); break;
     case GLFW_KEY_6: handleAction(Act::ModeClip); break;
     case GLFW_KEY_7: handleAction(Act::ModeXform); break;
+    case GLFW_KEY_8: handleAction(Act::ModeCurve); break;
+    case GLFW_KEY_B: handleAction(Act::CurveType); break;
     case GLFW_KEY_S: handleAction(Act::Style); break;
     case GLFW_KEY_W: handleAction(Act::Width); break;
     case GLFW_KEY_X: handleAction(Act::Color); break;
@@ -488,6 +531,21 @@ void PaintController::handleAction(Act a) {
         mode_ = Mode::Transform;
         cancelInProgress();
         markDirty();
+        break;
+    case Act::ModeCurve:
+        mode_ = Mode::Curve;
+        cancelInProgress();
+        markDirty();
+        break;
+    case Act::CurveType:
+        if (mode_ == Mode::Curve) {
+            curveBSpline_ = !curveBSpline_; // 切换"新曲线"的类型，已提交曲线不受影响
+        }
+        break;
+    case Act::CurveClose:
+        if (mode_ == Mode::Curve) {
+            commitCurve();
+        }
         break;
     case Act::Style:
         styleIdx_ = (styleIdx_ + 1) % 3;
@@ -632,7 +690,7 @@ void PaintController::buildToolbar(std::vector<ToolButton>& btns) const {
         {Act::ModeLine, "1 直线", Mode::Line},     {Act::ModeCircle, "2 圆", Mode::Circle},
         {Act::ModeArc, "3 圆弧", Mode::Arc},       {Act::ModePolygon, "4 多边形", Mode::Polygon},
         {Act::ModeSeed, "5 种子", Mode::SeedFill}, {Act::ModeClip, "6 裁剪", Mode::Clip},
-        {Act::ModeXform, "7 变换", Mode::Transform},
+        {Act::ModeXform, "7 变换", Mode::Transform}, {Act::ModeCurve, "8 曲线", Mode::Curve},
     };
     int x = 2;
     for (const auto& m : modes) {
@@ -651,6 +709,10 @@ void PaintController::buildToolbar(std::vector<ToolButton>& btns) const {
         x = add(Act::ClipRect, "K 矩形窗", x + 8, y2, false);
         x = add(Act::ClipPoly, "P 多边形窗", x, y2, false);
         x = add(Act::ClipAlgo, "M 算法", x, y2, false);
+    } else if (mode_ == Mode::Curve) {
+        x = add(Act::CurveType, curveBSpline_ ? "B 样条:开" : "B 样条:关", x + 8, y2,
+                curveBSpline_);
+        x = add(Act::CurveClose, "右键结束", x, y2, false);
     } else if (mode_ == Mode::Transform) {
         x = add(Act::ScaleUp, "+", x + 8, y2, false);
         x = add(Act::ScaleDown, "-", x, y2, false);
@@ -745,12 +807,72 @@ void PaintController::setRectClipWindow(IPoint p1, IPoint p2) {
     markDirty();
 }
 
+// ================= 曲线（实验四） =================
+
+void PaintController::commitCurve() {
+    if (pendingCurve_.size() >= 2) {
+        Shape s;
+        s.mode = Mode::Curve;
+        s.curve.reserve(pendingCurve_.size());
+        for (const auto& p : pendingCurve_) {
+            s.curve.push_back(toF(p));
+        }
+        s.bspline = curveBSpline_;
+        s.curveDeg = 3;
+        s.style = currentStyle();
+        shapes_.push_back(s);
+        markDirty();
+    }
+    pendingCurve_.clear();
+}
+
+std::vector<FPoint> PaintController::curveSamples(const Shape& s) const {
+    return s.bspline ? curves::sampleBSpline(s.curve, s.curveDeg, kCurveSegments)
+                     : curves::sampleBezier(s.curve, kCurveSegments);
+}
+
+// 曲线模式下可抓取的控制点：从上层图形往下找，命中容差与选中一致
+std::pair<int, int> PaintController::pickCurveCtrl(IPoint p) const {
+    for (int i = static_cast<int>(shapes_.size()) - 1; i >= 0; --i) {
+        const Shape& s = shapes_[static_cast<std::size_t>(i)];
+        if (s.mode != Mode::Curve) {
+            continue;
+        }
+        for (int j = 0; j < static_cast<int>(s.curve.size()); ++j) {
+            if (dist(p, roundPt(s.curve[static_cast<std::size_t>(j)])) <= kHitTol) {
+                return {i, j};
+            }
+        }
+    }
+    return {-1, -1};
+}
+
+// 曲线模式的辅助显示（预览层）：已提交曲线的控制多边形（暗灰虚线）+ 控制点手柄，
+// 正被拖拽的控制点用橙色高亮——控制点即"把手"，点住拖拽实时改形
+void PaintController::drawCurveHandles(FrameBuffer& fb) const {
+    for (int i = 0; i < static_cast<int>(shapes_.size()); ++i) {
+        const Shape& s = shapes_[static_cast<std::size_t>(i)];
+        if (s.mode != Mode::Curve) {
+            continue;
+        }
+        for (std::size_t j = 0; j + 1 < s.curve.size(); ++j) {
+            raster::drawLine(fb, roundPt(s.curve[j]), roundPt(s.curve[j + 1]),
+                             Color(90, 90, 100), {0xF0F0u, 1});
+        }
+        for (std::size_t j = 0; j < s.curve.size(); ++j) {
+            const bool hot = curveDrag_ && dragShapeIdx_ == i &&
+                             dragCtrlIdx_ == static_cast<int>(j);
+            drawCross(fb, roundPt(s.curve[j]), hot ? Color::Orange() : Color::Cyan(), 3);
+        }
+    }
+}
+
 // ================= 变换（实验三） =================
 
 // 种子填充是像素操作的记录、裁剪线段是演示辅助，都不是参数图形，不参与选中/变换
 bool PaintController::shapeSelectable(const Shape& s) const {
     return s.mode == Mode::Line || s.mode == Mode::Circle || s.mode == Mode::Arc ||
-           s.mode == Mode::Polygon;
+           s.mode == Mode::Polygon || s.mode == Mode::Curve;
 }
 
 FPoint PaintController::shapeCentroid(const Shape& s) const {
@@ -768,6 +890,19 @@ FPoint PaintController::shapeCentroid(const Shape& s) const {
         }
         const float n = static_cast<float>(s.polygon.size());
         return {sum.x / n, sum.y / n}; // 课程口径：顶点平均（非面积重心）
+    }
+    case Mode::Curve: {
+        // 与多边形同口径：控制点平均
+        if (s.curve.empty()) {
+            return toF(s.a);
+        }
+        FPoint sum{0.0f, 0.0f};
+        for (const auto& p : s.curve) {
+            sum.x += p.x;
+            sum.y += p.y;
+        }
+        const float n = static_cast<float>(s.curve.size());
+        return {sum.x / n, sum.y / n};
     }
     case Mode::Circle:
     case Mode::Arc:
@@ -831,6 +966,12 @@ void PaintController::applyToShape(Shape& s, const geom::Mat3& m, float rotDeg, 
             p = xformPt(m, p);
         }
         break;
+    case Mode::Curve:
+        // 控制点是浮点参数：直接保留浮点精度，不经过取整（Bezier 变换后仍是 Bezier）
+        for (auto& p : s.curve) {
+            p = geom::apply(m, p);
+        }
+        break;
     default:
         break;
     }
@@ -864,6 +1005,16 @@ int PaintController::hitShape(IPoint p) const {
                 return i;
             }
             break;
+        case Mode::Curve: {
+            // 命中 = 点击点到采样折线的最短距离在容差内
+            const std::vector<FPoint> samples = curveSamples(s);
+            for (std::size_t k = 0; k + 1 < samples.size(); ++k) {
+                if (distToSegment(p, roundPt(samples[k]), roundPt(samples[k + 1])) <= kHitTol) {
+                    return i;
+                }
+            }
+            break;
+        }
         default:
             break;
         }
@@ -930,6 +1081,15 @@ bool PaintController::shapeIntersectsRect(const Shape& s, const raster::Rect& r)
         const int n = static_cast<int>(s.polygon.size());
         for (int k = 0; k < n; ++k) {
             if (segHits(s.polygon[k], s.polygon[(k + 1) % n])) {
+                return true;
+            }
+        }
+        return false;
+    }
+    case Mode::Curve: {
+        const std::vector<FPoint> samples = curveSamples(s);
+        for (std::size_t k = 0; k + 1 < samples.size(); ++k) {
+            if (segHits(roundPt(samples[k]), roundPt(samples[k + 1]))) {
                 return true;
             }
         }
@@ -1019,6 +1179,35 @@ int PaintController::pickOutlineShape(IPoint p, FPoint& outPt, FPoint& outTan, i
             }
             break;
         }
+        case Mode::Curve: {
+            // 轮廓 = 采样折线：取最近段的投影点，切向沿该段方向
+            const std::vector<FPoint> samples = curveSamples(s);
+            float best = 1e30f;
+            FPoint bestPt{}, bestTan{};
+            for (std::size_t k = 0; k + 1 < samples.size(); ++k) {
+                const FPoint& q1 = samples[k];
+                const FPoint& q2 = samples[k + 1];
+                const float dd = distToSegment(p, roundPt(q1), roundPt(q2));
+                if (dd < best) {
+                    best = dd;
+                    const float abx = q2.x - q1.x;
+                    const float aby = q2.y - q1.y;
+                    const float apx = static_cast<float>(p.x) - q1.x;
+                    const float apy = static_cast<float>(p.y) - q1.y;
+                    const float ab2 = abx * abx + aby * aby;
+                    float t = ab2 > 0.0f ? (apx * abx + apy * aby) / ab2 : 0.0f;
+                    t = t < 0.0f ? 0.0f : (t > 1.0f ? 1.0f : t);
+                    bestPt = {q1.x + abx * t, q1.y + aby * t};
+                    bestTan = unitVec({abx, aby});
+                }
+            }
+            if (best <= kSnapTol) {
+                outPt = bestPt;
+                outTan = bestTan;
+                return i;
+            }
+            break;
+        }
         default:
             break;
         }
@@ -1036,9 +1225,13 @@ void PaintController::cancelInProgress() {
     refPick_ = false;
     dockStage_ = 0;
     dockAShapeIdx_ = -1;
+    curveDrag_ = false;
+    dragShapeIdx_ = -1;
+    dragCtrlIdx_ = -1;
     selected_.clear();
     pendingPolygon_.clear();
     pendingClipWin_.clear();
+    pendingCurve_.clear();
 }
 
 void PaintController::onMouseButton(int button, int action, int mods) {
@@ -1071,10 +1264,12 @@ void PaintController::onMouseButton(int button, int action, int mods) {
         return;
     }
 
-    if (button == 1) { // 右键：闭合多边形输入 / 取消当前操作
+    if (button == 1) { // 右键：闭合多边形/曲线输入 / 取消当前操作
         if (press) {
             if (mode_ == Mode::Polygon && !pendingPolygon_.empty()) {
                 closePolygon();
+            } else if (mode_ == Mode::Curve && !pendingCurve_.empty()) {
+                commitCurve();
             } else {
                 cancelInProgress();
             }
@@ -1280,6 +1475,29 @@ void PaintController::onMouseButton(int button, int action, int mods) {
             }
         }
         break;
+
+    case Mode::Curve:
+        if (press) {
+            // 输入空闲时优先抓取已提交曲线的控制点（按住拖拽 = 实时调整形状）
+            if (pendingCurve_.empty()) {
+                const auto grab = pickCurveCtrl(curr_);
+                if (grab.first >= 0) {
+                    curveDrag_ = true;
+                    dragShapeIdx_ = grab.first;
+                    dragCtrlIdx_ = grab.second;
+                    break;
+                }
+            }
+            if (!curveDrag_) {
+                pendingCurve_.push_back(curr_); // 左键连点加控制点，右键提交
+                markDirty();
+            }
+        } else if (curveDrag_) {
+            curveDrag_ = false;
+            dragShapeIdx_ = -1;
+            dragCtrlIdx_ = -1;
+        }
+        break;
     }
 }
 
@@ -1292,12 +1510,22 @@ void PaintController::onMouseMove(IPoint pos) {
             transformSelected(geom::translate(dx, dy), 0.0f, 1.0f);
         }
     }
+    // 曲线控制点拖拽：改参数（控制点），像素由提交层重算——实时跟随
+    if (curveDrag_ && mode_ == Mode::Curve && dragShapeIdx_ >= 0 &&
+        dragShapeIdx_ < static_cast<int>(shapes_.size())) {
+        auto& curve = shapes_[static_cast<std::size_t>(dragShapeIdx_)].curve;
+        if (dragCtrlIdx_ >= 0 && dragCtrlIdx_ < static_cast<int>(curve.size())) {
+            curve[static_cast<std::size_t>(dragCtrlIdx_)] = toF(pos);
+            markDirty();
+        }
+    }
     curr_ = pos;
 }
 
 std::string PaintController::title() const {
-    std::string t = "绘图引擎（实验一/二/三） | 1直线 2圆 3圆弧 4多边形 5种子填充 6裁剪 7变换 | "
-                    "S线型 W线宽 X填充色 E清屏 右键取消 | ";
+    std::string t =
+        "绘图引擎（实验一/二/三/四） | 1直线 2圆 3圆弧 4多边形 5种子填充 6裁剪 7变换 8曲线 | "
+        "S线型 W线宽 X填充色 E清屏 右键取消 | ";
     t += kModeNames[static_cast<int>(mode_)];
     switch (mode_) {
     case Mode::Line:
@@ -1342,6 +1570,15 @@ std::string PaintController::title() const {
         }
         if (dockStage_ == 2) {
             t += " | 对接:点击图形B轮廓完成拼接（右键取消）";
+        }
+        break;
+    case Mode::Curve:
+        t += curveBSpline_ ? " B样条" : " Bezier";
+        t += "（B 切换）| 左键连点控制点，右键结束；点住已提交曲线的控制点拖拽调整";
+        if (!pendingCurve_.empty()) {
+            t += " | 当前 ";
+            t += std::to_string(pendingCurve_.size());
+            t += " 个控制点";
         }
         break;
     }
