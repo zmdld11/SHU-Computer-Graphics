@@ -303,6 +303,17 @@ void PaintController::drawPreview(FrameBuffer& fb) const {
 
     // 变换模式标记：品红=各选中图形重心，青=当前参考点，黄=等待指定的参考点，橙=A 的对接点
     if (mode_ == Mode::Transform) {
+        if (bandSelect_) { // 框选橡皮筋（品红虚线）
+            const raster::Rect band = rectFrom(bandStart_, curr_);
+            raster::drawLine(fb, {band.xmin, band.ymin}, {band.xmax, band.ymin}, Color::Magenta(),
+                             {0xF0F0u, 1});
+            raster::drawLine(fb, {band.xmax, band.ymin}, {band.xmax, band.ymax}, Color::Magenta(),
+                             {0xF0F0u, 1});
+            raster::drawLine(fb, {band.xmax, band.ymax}, {band.xmin, band.ymax}, Color::Magenta(),
+                             {0xF0F0u, 1});
+            raster::drawLine(fb, {band.xmin, band.ymax}, {band.xmin, band.ymin}, Color::Magenta(),
+                             {0xF0F0u, 1});
+        }
         for (int idx : selected_) {
             if (idx < 0 || idx >= static_cast<int>(shapes_.size())) {
                 continue;
@@ -777,6 +788,75 @@ int PaintController::hitShape(IPoint p) const {
     return -1;
 }
 
+// 框选：图形是否与矩形相交。线段/多边形边按 ~4px 步进采样，圆用解析法（圆心到矩形
+// 最近点的距离 ≤ 半径，含"圆整个包住矩形"），弧在角度范围内采样。
+bool PaintController::shapeIntersectsRect(const Shape& s, const raster::Rect& r) const {
+    auto inRect = [&](IPoint p) {
+        return p.x >= r.xmin && p.x <= r.xmax && p.y >= r.ymin && p.y <= r.ymax;
+    };
+    auto segHits = [&](IPoint a, IPoint b) {
+        if (inRect(a) || inRect(b)) {
+            return true;
+        }
+        const int steps = std::max(1, (std::abs(b.x - a.x) + std::abs(b.y - a.y)) / 4);
+        for (int k = 1; k < steps; ++k) {
+            const IPoint p{a.x + (b.x - a.x) * k / steps, a.y + (b.y - a.y) * k / steps};
+            if (inRect(p)) {
+                return true;
+            }
+        }
+        return false;
+    };
+    switch (s.mode) {
+    case Mode::Line:
+        return segHits(s.a, s.b);
+    case Mode::Circle: {
+        const int cx = std::max(r.xmin, std::min(s.a.x, r.xmax));
+        const int cy = std::max(r.ymin, std::min(s.a.y, r.ymax));
+        const int dx = s.a.x - cx;
+        const int dy = s.a.y - cy;
+        return dx * dx + dy * dy <= s.radius * s.radius;
+    }
+    case Mode::Arc: {
+        const float span = normDeg(s.endDeg - s.startDeg);
+        const int n = span <= 0.0f ? 64 : std::max(1, static_cast<int>(span / 5.0f));
+        for (int k = 0; k <= n; ++k) {
+            const float deg = s.startDeg + span * static_cast<float>(k) / static_cast<float>(n);
+            const float rad = deg * kPiF / 180.0f;
+            const IPoint p{s.a.x + static_cast<int>(std::lround(std::cos(rad) * s.radius)),
+                           s.a.y + static_cast<int>(std::lround(std::sin(rad) * s.radius))};
+            if (inRect(p)) {
+                return true;
+            }
+        }
+        return false;
+    }
+    case Mode::Polygon: {
+        for (const auto& p : s.polygon) {
+            if (inRect(p)) {
+                return true;
+            }
+        }
+        const IPoint corners[4] = {{r.xmin, r.ymin}, {r.xmax, r.ymin}, {r.xmax, r.ymax},
+                                   {r.xmin, r.ymax}};
+        for (const auto& c : corners) {
+            if (pointInPolygon(c, s.polygon)) {
+                return true; // 矩形整个落在多边形内部
+            }
+        }
+        const int n = static_cast<int>(s.polygon.size());
+        for (int k = 0; k < n; ++k) {
+            if (segHits(s.polygon[k], s.polygon[(k + 1) % n])) {
+                return true;
+            }
+        }
+        return false;
+    }
+    default:
+        return false;
+    }
+}
+
 // 点击点吸附到某图形轮廓的最近点，同时给出该点的单位切向（对接拼接用）
 int PaintController::pickOutlineShape(IPoint p, FPoint& outPt, FPoint& outTan, int skipIdx) const {
     for (int i = static_cast<int>(shapes_.size()) - 1; i >= 0; --i) {
@@ -869,6 +949,7 @@ void PaintController::cancelInProgress() {
     clipRectEdit_ = false;
     clipPolyEdit_ = false;
     xformDrag_ = false;
+    bandSelect_ = false;
     refPick_ = false;
     dockStage_ = 0;
     dockAShapeIdx_ = -1;
@@ -1084,14 +1165,35 @@ void PaintController::onMouseButton(int button, int action, int mods) {
                     xformDrag_ = true;
                     lastDrag_ = curr_;
                 }
-            } else { // 点空白：清除选中
-                if (!selected_.empty()) {
+            } else { // 点空白：进入框选拖拽，松开时结算（原地微点=清除选中）
+                bandSelect_ = true;
+                bandStart_ = curr_;
+            }
+        } else {
+            xformDrag_ = false;
+            if (bandSelect_) {
+                bandSelect_ = false;
+                const raster::Rect band = rectFrom(bandStart_, curr_);
+                if (band.xmax - band.xmin >= 4 || band.ymax - band.ymin >= 4) {
+                    // 框选：与矩形相交的可选图形全部选中；Shift=叠加，否则替换
+                    if (!shiftHeld_) {
+                        selected_.clear();
+                    }
+                    for (int i = 0; i < static_cast<int>(shapes_.size()); ++i) {
+                        if (!shapeSelectable(shapes_[i]) ||
+                            !shapeIntersectsRect(shapes_[i], band)) {
+                            continue;
+                        }
+                        if (std::find(selected_.begin(), selected_.end(), i) == selected_.end()) {
+                            selected_.push_back(i);
+                        }
+                    }
+                    markDirty();
+                } else if (!selected_.empty()) { // 原地微点：清除选中
                     selected_.clear();
                     markDirty();
                 }
             }
-        } else {
-            xformDrag_ = false;
         }
         break;
     }
@@ -1147,7 +1249,7 @@ std::string PaintController::title() const {
         t += std::to_string(selected_.size());
         t += " 参考点:";
         t += refManual_ ? "指定" : "重心";
-        t += " | 左键选(Shift加选) 拖拽/方向键平移 +−缩放 R/T旋转 G参考点 J对接";
+        t += " | 左键选(Shift加选) 空白拖拽框选 拖拽/方向键平移 +−缩放 R/T旋转 G参考点 J对接";
         if (refPick_) {
             t += " | 点击画布指定参考点";
         }

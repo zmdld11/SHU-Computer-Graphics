@@ -545,6 +545,49 @@ int runAlgorithmSelfChecks() {
         expect(canvas.pixel(500, 360) == Color::Black(), "ui3-j: 圆已离开原位");
     }
 
+    // ================= 实验三：框选（橡皮筋矩形批量选中） =================
+    {
+        PaintController ctrl;
+        FrameBuffer canvas(kWidth, kHeight);
+
+        // 三条相离直线
+        ctrl.onKey(GLFW_KEY_1, GLFW_PRESS);
+        const IPoint segs[3][2] = {{{100, 100}, {200, 100}}, {{400, 100}, {500, 100}},
+                                   {{650, 400}, {720, 450}}};
+        for (const auto& sg : segs) {
+            ctrl.onMouseMove(sg[0]);
+            ctrl.onMouseButton(0, GLFW_PRESS);
+            ctrl.onMouseMove(sg[1]);
+            ctrl.onMouseButton(0, GLFW_RELEASE);
+        }
+        ctrl.onKey(GLFW_KEY_7, GLFW_PRESS);
+
+        // 空白处拖拽框选前两条 → 选中:2（品红重心标记出现在两线中点）
+        ctrl.onMouseMove({60, 60});
+        ctrl.onMouseButton(0, GLFW_PRESS);
+        ctrl.onMouseMove({550, 160});
+        ctrl.onMouseButton(0, GLFW_RELEASE);
+        ctrl.onMouseMove({750, 60}); // 光标移开，不遮断言点
+        ctrl.render(canvas);
+        expect(ctrl.title().find("选中:2") != std::string::npos, "band: 框选两条直线");
+        expect(canvas.pixel(150, 100) == Color::Magenta() &&
+                   canvas.pixel(450, 100) == Color::Magenta(),
+               "band: 两个重心标记已绘制");
+
+        // Shift+框选第三条 → 叠加为 选中:3
+        ctrl.onMouseMove({600, 360});
+        ctrl.onMouseButton(0, GLFW_PRESS, GLFW_MOD_SHIFT);
+        ctrl.onMouseMove({750, 480});
+        ctrl.onMouseButton(0, GLFW_RELEASE, GLFW_MOD_SHIFT);
+        expect(ctrl.title().find("选中:3") != std::string::npos, "band: Shift 框选叠加第三条");
+
+        // 空白处原地微点 → 清除选中
+        ctrl.onMouseMove({60, 550});
+        ctrl.onMouseButton(0, GLFW_PRESS);
+        ctrl.onMouseButton(0, GLFW_RELEASE);
+        expect(ctrl.title().find("选中:0") != std::string::npos, "band: 空白微点清除选中");
+    }
+
     // ================= 自绘任务栏（按钮点击 = 原按键操作） =================
     {
         PaintController ctrl;

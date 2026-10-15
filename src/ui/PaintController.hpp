@@ -92,6 +92,7 @@ private:
     void transformSelected(const geom::Mat3& m, float rotDeg, float scaleF);
     static void applyToShape(Shape& s, const geom::Mat3& m, float rotDeg, float scaleF);
     int hitShape(IPoint p) const;                  // 返回命中的图形下标，无命中 -1
+    bool shapeIntersectsRect(const Shape& s, const raster::Rect& r) const; // 框选：图形与矩形相交
     // 点击点吸附到某图形轮廓的最近点（对接点），返回该图形下标；skipIdx 用于选 B 时跳过 A
     int pickOutlineShape(IPoint p, FPoint& outPt, FPoint& outTan, int skipIdx = -1) const;
 
@@ -137,6 +138,8 @@ private:
     bool shiftHeld_ = false;     // 最近一次鼠标事件是否带 Shift（多选）
     bool xformDrag_ = false;     // 拖拽平移进行中
     IPoint lastDrag_{};          // 上一次增量平移的参考位置
+    bool bandSelect_ = false;    // 框选拖拽进行中（空白处按下）
+    IPoint bandStart_{};         // 框选起点
     bool refManual_ = false;     // 参考点：false=重心（默认） true=手动指定
     bool refPick_ = false;       // 等待左键点击指定参考点
     IPoint refPoint_{};          // 手动参考点
