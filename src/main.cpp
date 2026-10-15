@@ -52,6 +52,14 @@ int main(int argc, char** argv) {
             ctrl.onMouseButton(0, GLFW_RELEASE);
         }
         ctrl.onMouseButton(1, GLFW_PRESS); // 右键闭合
+        ctrl.onKey(GLFW_KEY_8, GLFW_PRESS); // 曲线：4 控制点连点 + 右键提交（下方会被窗口裁剪）
+        const cg::IPoint cpts[4] = {{380, 520}, {470, 420}, {580, 540}, {690, 440}};
+        for (const auto& pt : cpts) {
+            ctrl.onMouseMove(pt);
+            ctrl.onMouseButton(0, GLFW_PRESS);
+            ctrl.onMouseButton(0, GLFW_RELEASE);
+        }
+        ctrl.onMouseButton(1, GLFW_PRESS); // 右键提交曲线
         ctrl.onKey(GLFW_KEY_6, GLFW_PRESS); // 裁剪模式：K 拖拽定义窗口 → 常驻裁剪开启
         ctrl.onKey(GLFW_KEY_K, GLFW_PRESS);
         ctrl.onMouseMove({150, 150});

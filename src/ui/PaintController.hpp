@@ -8,6 +8,7 @@
 #include "raster/Rasterizer.hpp"
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace cg {
@@ -34,9 +35,10 @@ public:
     // 操作与按钮描述放在 public：测试按标签定位按钮中心再模拟点击，布局变化不破坏用例
     enum class Act {
         None = 0,
-        ModeLine, ModeCircle, ModeArc, ModePolygon, ModeSeed, ModeClip, ModeXform,
+        ModeLine, ModeCircle, ModeArc, ModePolygon, ModeSeed, ModeClip, ModeXform, ModeCurve,
         Style, Width, Color, Clear,
         PolyFill, PolyClose,
+        CurveType, CurveClose,
         ClipRect, ClipPoly, ClipAlgo, ClipToggle,
         ScaleUp, ScaleDown, RotCW, RotCCW, RefPoint, Dock,
         NudgeL, NudgeR, NudgeU, NudgeD,
@@ -56,7 +58,7 @@ public:
 
 private:
     enum class Mode { Line = 0, Circle = 1, Arc = 2, Polygon = 3, SeedFill = 4, Clip = 5,
-                      Transform = 6 };
+                      Transform = 6, Curve = 7 };
 
     // 一个已完成、可重放的图形（参数化存储：变换改这里，像素是重算结果）
     struct Shape {
@@ -68,6 +70,9 @@ private:
         float endDeg = 360.0f;       // Arc / Circle（整圆）
         std::vector<IPoint> polygon; // Polygon: 顶点表
         bool filled = true;          // Polygon: 填充 or 仅轮廓
+        std::vector<FPoint> curve;   // Curve: 控制点表（浮点，拖拽调整平滑）
+        bool bspline = false;        // Curve: false=Bezier true=B 样条（挑战题）
+        int curveDeg = 3;            // Curve: B 样条阶数（Bezier 阶数=控制点数-1，不用此字段）
         raster::LineStyle style;
         Color color = Color::White();
     };
@@ -110,6 +115,12 @@ private:
     void cancelInProgress();
     void setRectClipWindow(IPoint p1, IPoint p2);
 
+    // ---- 曲线（实验四） ----
+    void commitCurve();                                    // 待定控制点 → 已提交曲线
+    std::vector<FPoint> curveSamples(const Shape& s) const; // 曲线采样折线（渲染/命中共用）
+    std::pair<int, int> pickCurveCtrl(IPoint p) const;      // 命中的(图形下标,控制点下标)
+    void drawCurveHandles(FrameBuffer& fb) const;           // 曲线模式：控制多边形+控制点手柄
+
     // ---- 任务栏 ----
     void handleAction(Act a);                        // 键盘与按钮的统一操作入口
     void buildToolbar(std::vector<ToolButton>& btns) const;
@@ -132,6 +143,13 @@ private:
     float arcStart_ = 0.0f;
     std::vector<IPoint> pendingPolygon_;
     bool polygonFilled_ = true;
+
+    // 曲线状态（实验四）
+    std::vector<IPoint> pendingCurve_; // 连点中的控制点（左键加点，右键提交）
+    bool curveBSpline_ = false;        // 新曲线类型：false=Bezier true=B 样条（B 键切换）
+    bool curveDrag_ = false;           // 拖拽已提交曲线的控制点进行中
+    int dragShapeIdx_ = -1;            // 被拖拽控制点所属图形下标
+    int dragCtrlIdx_ = -1;             // 被拖拽的控制点下标
 
     // 裁剪状态
     ClipWindow clipWin_;

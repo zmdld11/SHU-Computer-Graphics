@@ -4,6 +4,8 @@
 
 #include "core/Color.hpp"
 #include "core/FrameBuffer.hpp"
+#include "curves/Bezier.hpp"
+#include "curves/BSpline.hpp"
 #include "raster/Clip.hpp"
 #include "raster/Fill.hpp"
 #include "raster/Rasterizer.hpp"
@@ -656,6 +658,156 @@ int runAlgorithmSelfChecks() {
         expect(ctrl.title().find("裁剪:开") != std::string::npos, "clip2: 标题栏显示常驻裁剪状态");
     }
 
+    // ================= 实验四：Bezier 曲线数学（de Casteljau） =================
+    {
+        using namespace cg::curves;
+        auto nearF = [](FPoint a, float x, float y, float tol) {
+            return std::fabs(a.x - x) <= tol && std::fabs(a.y - y) <= tol;
+        };
+
+        const std::vector<FPoint> cubic = {{0.0f, 0.0f}, {100.0f, 0.0f}, {100.0f, 100.0f},
+                                           {0.0f, 100.0f}};
+        const std::vector<FPoint> samples = sampleBezier(cubic, 64);
+        expect(nearF(samples.front(), 0.0f, 0.0f, 1e-3f) &&
+                   nearF(samples.back(), 0.0f, 100.0f, 1e-3f),
+               "bezier: 端点插值（过首末控制点）");
+        expect(samples.size() == 65, "bezier: 采样数 = segments+1");
+
+        const std::vector<FPoint> lin = sampleBezier({{0.0f, 0.0f}, {10.0f, 20.0f}}, 2);
+        expect(nearF(lin[1], 5.0f, 10.0f, 1e-3f), "bezier: 两点退化为直线（中点）");
+
+        const std::vector<FPoint> quad = sampleBezier({{0.0f, 0.0f}, {40.0f, 40.0f}, {80.0f, 0.0f}}, 2);
+        expect(nearF(quad[1], 40.0f, 20.0f, 1e-3f), "bezier: 二次中点 = (P0+2P1+P2)/4");
+
+        const FPoint cubicMid = sampleBezier(cubic, 2)[1];
+        expect(nearF(cubicMid, 75.0f, 50.0f, 1e-3f), "bezier: 三次中点 = (P0+3P1+3P2+P3)/8");
+
+        // 对称性：控制点倒序 → 采样序列倒序
+        const std::vector<FPoint> rev =
+            sampleBezier({cubic.rbegin(), cubic.rend()}, 64);
+        bool mirrored = true;
+        for (std::size_t k = 0; k < samples.size() && mirrored; ++k) {
+            const FPoint& f = samples[k];
+            const FPoint& r = rev[rev.size() - 1 - k];
+            if (!nearF(f, r.x, r.y, 1e-3f)) {
+                mirrored = false;
+            }
+        }
+        expect(mirrored, "bezier: 控制点倒序则曲线倒序（对称性）");
+
+        bool inHull = true;
+        for (const auto& p : samples) {
+            if (p.x < -1e-3f || p.x > 100.0f + 1e-3f || p.y < -1e-3f || p.y > 100.0f + 1e-3f) {
+                inHull = false;
+            }
+        }
+        expect(inHull, "bezier: 曲线在控制点凸包（包围盒）内");
+    }
+
+    // ================= 实验四（挑战题）：B 样条数学（Cox-de Boor） =================
+    {
+        using namespace cg::curves;
+        auto nearF = [](FPoint a, float x, float y, float tol) {
+            return std::fabs(a.x - x) <= tol && std::fabs(a.y - y) <= tol;
+        };
+
+        const std::vector<FPoint> cps = {{0.0f, 0.0f}, {100.0f, 0.0f}, {100.0f, 100.0f},
+                                         {0.0f, 100.0f}};
+        const std::vector<FPoint> bs = sampleBSpline(cps, 3, 64);
+        expect(nearF(bs.front(), 0.0f, 0.0f, 1e-3f) && nearF(bs.back(), 0.0f, 100.0f, 1e-3f),
+               "bspline: clamped 端点过首末控制点");
+
+        // 4 点三次 clamped B 样条 == 三次 Bezier（clamped 基退化为 Bernstein 基）
+        const std::vector<FPoint> bz = sampleBezier(cps, 64);
+        bool same = true;
+        for (std::size_t k = 0; k < bs.size() && same; ++k) {
+            if (!nearF(bs[k], bz[k].x, bz[k].y, 1e-3f)) {
+                same = false;
+            }
+        }
+        expect(same, "bspline: 4点三次 clamped 逐点退化为 Bezier");
+
+        const std::vector<FPoint> line2 = sampleBSpline({{0.0f, 0.0f}, {10.0f, 20.0f}}, 3, 2);
+        expect(nearF(line2[1], 5.0f, 10.0f, 1e-3f), "bspline: 控制点不足降阶，2点=直线");
+
+        const std::vector<FPoint> bs5 = sampleBSpline(
+            {{0.0f, 0.0f}, {200.0f, 0.0f}, {200.0f, 200.0f}, {0.0f, 200.0f}, {100.0f, 100.0f}},
+            3, 64);
+        bool hull5 = true;
+        for (const auto& p : bs5) {
+            if (p.x < -1e-3f || p.x > 200.0f + 1e-3f || p.y < -1e-3f || p.y > 200.0f + 1e-3f) {
+                hull5 = false;
+            }
+        }
+        expect(hull5, "bspline: 曲线在控制点凸包（包围盒）内");
+    }
+
+    // ================= 实验四：曲线交互（连点输入 + 控制点拖拽调整） =================
+    {
+        PaintController ctrl;
+        FrameBuffer canvas(kWidth, kHeight);
+
+        // 模式 8：连点 4 个控制点 + 右键提交 → 三次 Bezier
+        ctrl.onKey(GLFW_KEY_8, GLFW_PRESS);
+        const IPoint cps[4] = {{100, 150}, {300, 100}, {500, 200}, {700, 150}};
+        for (const auto& pt : cps) {
+            ctrl.onMouseMove(pt);
+            ctrl.onMouseButton(0, GLFW_PRESS);
+            ctrl.onMouseButton(0, GLFW_RELEASE);
+        }
+        ctrl.onMouseMove({750, 500}); // 光标挪开再右键，不遮断言点
+        ctrl.onMouseButton(1, GLFW_PRESS);
+        ctrl.render(canvas);
+        // 断言点取 B(0.25)：权重 (27,27,9,1)/64 → (250, 135.94)≈(250,136)，
+        // 刻意避开 B(0.5)——曲线模式下控制多边形虚线恰过 (400,150)，会盖掉曲线像素
+        expect(canvas.pixel(250, 136) == Color::White(), "ui4: 连点+右键提交后曲线经过 B(0.25)");
+
+        // 拖拽控制点：抓 P1=(300,100) 拖到 (300,300) → 曲线实时跟随
+        ctrl.onMouseMove({300, 100});
+        ctrl.onMouseButton(0, GLFW_PRESS); // 抓住 P1
+        ctrl.onMouseMove({300, 300});
+        ctrl.onMouseButton(0, GLFW_RELEASE);
+        ctrl.render(canvas);
+        // 新 B(0.25) = (250, 220.31)≈(250,220)：x 不变、y 变 —— 曲线确实跟随控制点改形
+        expect(canvas.pixel(250, 220) == Color::White(), "ui4: 拖拽控制点后曲线跟随新形状");
+        expect(canvas.pixel(250, 136) == Color::Black(), "ui4: 原位置已不在曲线上");
+
+        // B 键切样条：新曲线按 clamped 三次 B 样条生成（5 控制点，C(0.5)=(400,400)）
+        ctrl.onKey(GLFW_KEY_B, GLFW_PRESS);
+        const IPoint bps[5] = {{100, 400}, {250, 350}, {400, 450}, {550, 350}, {700, 400}};
+        for (const auto& pt : bps) {
+            ctrl.onMouseMove(pt);
+            ctrl.onMouseButton(0, GLFW_PRESS);
+            ctrl.onMouseButton(0, GLFW_RELEASE);
+        }
+        ctrl.onMouseMove({750, 550});
+        ctrl.onMouseButton(1, GLFW_PRESS); // 右键提交
+        ctrl.render(canvas);
+        expect(canvas.pixel(400, 400) == Color::White(), "ui4: B样条曲线按切换后类型生成");
+        expect(ctrl.title().find("B样条") != std::string::npos, "ui4: 标题栏显示 B样条 类型");
+
+        // 变换模式也能选中曲线并平移（曲线是参数图形，接入既有选中/变换体系）
+        ctrl.onKey(GLFW_KEY_7, GLFW_PRESS);
+        ctrl.onMouseMove({400, 400}); // 点在 B样条曲线中点上 → 选中
+        ctrl.onMouseButton(0, GLFW_PRESS);
+        ctrl.onMouseButton(0, GLFW_RELEASE);
+        for (int i = 0; i < 10; ++i) {
+            ctrl.onKey(GLFW_KEY_RIGHT, GLFW_PRESS); // 右移 10px
+        }
+        ctrl.render(canvas);
+        expect(canvas.pixel(410, 400) == Color::White(), "ui4: 曲线可被选中并随方向键平移");
+
+        // 框选曲线：空白拖拽矩形罩住样条 → 选中:1
+        ctrl.onMouseMove({60, 60});
+        ctrl.onMouseButton(0, GLFW_PRESS); // 原地微点清除选中
+        ctrl.onMouseButton(0, GLFW_RELEASE);
+        ctrl.onMouseMove({330, 320});
+        ctrl.onMouseButton(0, GLFW_PRESS);
+        ctrl.onMouseMove({780, 580});
+        ctrl.onMouseButton(0, GLFW_RELEASE);
+        expect(ctrl.title().find("选中:1") != std::string::npos, "ui4: 框选可选中曲线");
+    }
+
     // ================= 自绘任务栏（按钮点击 = 原按键操作） =================
     {
         PaintController ctrl;
@@ -777,6 +929,44 @@ bool writeDemoImage(const char* path) {
         IPoint b = seg[1];
         if (cohenSutherland(a, b, win)) {
             drawLine(fb, a, b, Color::Green(), {0xFFFFu, 3}); // 裁剪结果
+        }
+    }
+
+    // ⑤ Bezier 曲线（实验四）：de Casteljau 采样折线 + 控制多边形（灰虚线）
+    const std::vector<FPoint> bctrl = {{40.0f, 320.0f}, {100.0f, 430.0f}, {170.0f, 430.0f},
+                                       {230.0f, 320.0f}};
+    for (std::size_t i = 0; i + 1 < bctrl.size(); ++i) {
+        drawLine(fb, {static_cast<int>(bctrl[i].x), static_cast<int>(bctrl[i].y)},
+                 {static_cast<int>(bctrl[i + 1].x), static_cast<int>(bctrl[i + 1].y)},
+                 Color(120, 120, 130), {0xF0F0u, 1});
+    }
+    {
+        const std::vector<FPoint> samples = curves::sampleBezier(bctrl, 96);
+        for (std::size_t i = 0; i + 1 < samples.size(); ++i) {
+            drawLine(fb, {static_cast<int>(std::lround(samples[i].x)),
+                          static_cast<int>(std::lround(samples[i].y))},
+                     {static_cast<int>(std::lround(samples[i + 1].x)),
+                      static_cast<int>(std::lround(samples[i + 1].y))},
+                     Color::Yellow(), {0xFFFFu, 3});
+        }
+    }
+
+    // ⑥ B 样条（实验四挑战题）：clamped 三次，5 控制点（过首末点）
+    const std::vector<FPoint> sctrl = {{40.0f, 480.0f}, {85.0f, 560.0f}, {140.0f, 470.0f},
+                                       {195.0f, 560.0f}, {240.0f, 480.0f}};
+    for (std::size_t i = 0; i + 1 < sctrl.size(); ++i) {
+        drawLine(fb, {static_cast<int>(sctrl[i].x), static_cast<int>(sctrl[i].y)},
+                 {static_cast<int>(sctrl[i + 1].x), static_cast<int>(sctrl[i + 1].y)},
+                 Color(120, 120, 130), {0xF0F0u, 1});
+    }
+    {
+        const std::vector<FPoint> samples = curves::sampleBSpline(sctrl, 3, 96);
+        for (std::size_t i = 0; i + 1 < samples.size(); ++i) {
+            drawLine(fb, {static_cast<int>(std::lround(samples[i].x)),
+                          static_cast<int>(std::lround(samples[i].y))},
+                     {static_cast<int>(std::lround(samples[i + 1].x)),
+                      static_cast<int>(std::lround(samples[i + 1].y))},
+                     Color::Cyan(), {0xFFFFu, 3});
         }
     }
 
