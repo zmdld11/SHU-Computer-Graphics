@@ -63,7 +63,7 @@ private:
         ModeLine, ModeCircle, ModeArc, ModePolygon, ModeSeed, ModeClip, ModeXform,
         Style, Width, Color, Clear,
         PolyFill, PolyClose,
-        ClipRect, ClipPoly, ClipAlgo,
+        ClipRect, ClipPoly, ClipAlgo, ClipToggle,
         ScaleUp, ScaleDown, RotCW, RotCCW, RefPoint, Dock,
         NudgeL, NudgeR, NudgeU, NudgeD,
     };
@@ -78,9 +78,10 @@ private:
     raster::LineStyle currentStyle() const;
     Color currentFillColor() const;
     void drawShape(FrameBuffer& fb, const Shape& s) const;
-    void drawClipWindow(FrameBuffer& fb) const;
+    void drawClipWindow(FrameBuffer& fb, const Color& c, bool dashed) const;
     void drawPreview(FrameBuffer& fb) const;
     void commitRender(); // 图形列表 → committed_
+    void copyCommittedClipped(FrameBuffer& fb) const; // 常驻裁剪：窗口内照抄，窗口外保持背景
     bool clipLine(IPoint& a, IPoint& b) const;
     const char* clipAlgoName() const;
 
@@ -128,6 +129,7 @@ private:
 
     // 裁剪状态
     ClipWindow clipWin_;
+    bool clipOn_ = false;       // 常驻裁剪开关：开=所有模式只显示窗口内内容（V/任务栏切换）
     int clipAlgoIdx_ = 0;       // 0=C-S，1=中点分割（矩形窗口时有效）
     bool clipRectEdit_ = false; // K：拖拽定义矩形窗口
     bool clipPolyEdit_ = false; // P：连点定义凸多边形窗口

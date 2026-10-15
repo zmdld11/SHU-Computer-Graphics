@@ -588,6 +588,74 @@ int runAlgorithmSelfChecks() {
         expect(ctrl.title().find("选中:0") != std::string::npos, "band: 空白微点清除选中");
     }
 
+    // ================= extension：常驻裁剪（窗口独立于模式，持续生效可开关） =================
+    {
+        PaintController ctrl;
+        FrameBuffer canvas(kWidth, kHeight);
+
+        // 裁剪模式里 K+拖拽显式定义矩形窗口 → 常驻裁剪自动开启
+        ctrl.onKey(GLFW_KEY_6, GLFW_PRESS);
+        ctrl.onKey(GLFW_KEY_K, GLFW_PRESS);
+        ctrl.onMouseMove({200, 150});
+        ctrl.onMouseButton(0, GLFW_PRESS);
+        ctrl.onMouseMove({640, 480});
+        ctrl.onMouseButton(0, GLFW_RELEASE);
+        // 切回直线/圆模式画跨界图形：线 (100,300)→(700,300)，圆心 (200,300) r=100
+        ctrl.onKey(GLFW_KEY_1, GLFW_PRESS);
+        ctrl.onMouseMove({100, 300});
+        ctrl.onMouseButton(0, GLFW_PRESS);
+        ctrl.onMouseMove({700, 300});
+        ctrl.onMouseButton(0, GLFW_RELEASE);
+        ctrl.onKey(GLFW_KEY_2, GLFW_PRESS);
+        ctrl.onMouseMove({200, 300});
+        ctrl.onMouseButton(0, GLFW_PRESS);
+        ctrl.onMouseMove({300, 300});
+        ctrl.onMouseButton(0, GLFW_RELEASE);
+        ctrl.onMouseMove({750, 80}); // 光标移开
+        ctrl.render(canvas);
+
+        auto rowHasWhite = [&](int y, int x0, int x1) {
+            for (int x = x0; x <= x1; ++x) {
+                if (canvas.pixel(x, y) == Color::White()) {
+                    return true;
+                }
+            }
+            return false;
+        };
+        expect(rowHasWhite(300, 300, 500), "clip2: 窗口内线段正常显示");
+        expect(!rowHasWhite(300, 100, 199), "clip2: 窗口外线段/圆弧被隐藏（左）");
+        expect(!rowHasWhite(300, 641, 700), "clip2: 窗口外线段被隐藏（右）");
+
+        // V 关闭 → 窗口外内容立即恢复；再开 → 再次隐藏
+        ctrl.onKey(GLFW_KEY_V, GLFW_PRESS);
+        ctrl.render(canvas);
+        expect(rowHasWhite(300, 100, 199), "clip2: 关闭常驻裁剪后窗口外恢复显示");
+        ctrl.onKey(GLFW_KEY_V, GLFW_PRESS);
+        ctrl.render(canvas);
+        expect(!rowHasWhite(300, 100, 199), "clip2: 重新开启后窗口外再次隐藏");
+
+        // 凸多边形窗口（挑战题）同样常驻：P+三点+右键闭合
+        ctrl.onKey(GLFW_KEY_6, GLFW_PRESS);
+        ctrl.onKey(GLFW_KEY_P, GLFW_PRESS);
+        const IPoint tri[3] = {{250, 200}, {600, 200}, {420, 500}};
+        for (const auto& pt : tri) {
+            ctrl.onMouseMove(pt);
+            ctrl.onMouseButton(0, GLFW_PRESS);
+            ctrl.onMouseButton(0, GLFW_RELEASE);
+        }
+        ctrl.onMouseButton(1, GLFW_PRESS); // 右键闭合
+        ctrl.onKey(GLFW_KEY_1, GLFW_PRESS);
+        ctrl.onMouseMove({100, 350});
+        ctrl.onMouseButton(0, GLFW_PRESS);
+        ctrl.onMouseMove({750, 350});
+        ctrl.onMouseButton(0, GLFW_RELEASE);
+        ctrl.onMouseMove({750, 80});
+        ctrl.render(canvas);
+        expect(rowHasWhite(350, 400, 450), "clip2: 凸多边形窗口内线段显示");
+        expect(!rowHasWhite(350, 100, 240), "clip2: 凸多边形窗口外线段隐藏");
+        expect(ctrl.title().find("裁剪:开") != std::string::npos, "clip2: 标题栏显示常驻裁剪状态");
+    }
+
     // ================= 自绘任务栏（按钮点击 = 原按键操作） =================
     {
         PaintController ctrl;

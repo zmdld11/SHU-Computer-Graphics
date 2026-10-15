@@ -6,6 +6,7 @@
 #include <GLFW/glfw3.h>
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace cg {
 namespace {
@@ -40,11 +41,12 @@ void drawCross(FrameBuffer& fb, IPoint p, const Color& c, int half) {
     }
 }
 
-void drawRectOutline(FrameBuffer& fb, const raster::Rect& r, const Color& c) {
-    raster::drawLine(fb, {r.xmin, r.ymin}, {r.xmax, r.ymin}, c, {});
-    raster::drawLine(fb, {r.xmax, r.ymin}, {r.xmax, r.ymax}, c, {});
-    raster::drawLine(fb, {r.xmax, r.ymax}, {r.xmin, r.ymax}, c, {});
-    raster::drawLine(fb, {r.xmin, r.ymax}, {r.xmin, r.ymin}, c, {});
+void drawRectOutline(FrameBuffer& fb, const raster::Rect& r, const Color& c,
+                     const raster::LineStyle& ls = {}) {
+    raster::drawLine(fb, {r.xmin, r.ymin}, {r.xmax, r.ymin}, c, ls);
+    raster::drawLine(fb, {r.xmax, r.ymin}, {r.xmax, r.ymax}, c, ls);
+    raster::drawLine(fb, {r.xmax, r.ymax}, {r.xmin, r.ymax}, c, ls);
+    raster::drawLine(fb, {r.xmin, r.ymax}, {r.xmin, r.ymin}, c, ls);
 }
 
 raster::Rect rectFrom(IPoint p1, IPoint p2) {
@@ -194,12 +196,13 @@ void PaintController::drawShape(FrameBuffer& fb, const Shape& s) const {
     }
 }
 
-void PaintController::drawClipWindow(FrameBuffer& fb) const {
+void PaintController::drawClipWindow(FrameBuffer& fb, const Color& c, bool dashed) const {
     if (!clipWin_.valid) {
         return;
     }
+    const raster::LineStyle ls = dashed ? raster::LineStyle{0xF0F0u, 1} : raster::LineStyle{};
     if (clipWin_.kind == ClipWindow::Kind::Rect) {
-        drawRectOutline(fb, clipWin_.rect, Color::White());
+        drawRectOutline(fb, clipWin_.rect, c, ls);
         return;
     }
     const auto& poly = clipWin_.poly;
@@ -208,7 +211,7 @@ void PaintController::drawClipWindow(FrameBuffer& fb) const {
         const FPoint& p2 = poly[(i + 1) % poly.size()];
         raster::drawLine(fb, {static_cast<int>(std::lround(p1.x)), static_cast<int>(std::lround(p1.y))},
                          {static_cast<int>(std::lround(p2.x)), static_cast<int>(std::lround(p2.y))},
-                         Color::White(), {});
+                         c, ls);
     }
 }
 
@@ -227,8 +230,52 @@ void PaintController::commitRender() {
     for (const auto& s : shapes_) {
         drawShape(*committed_, s);
     }
-    if (mode_ == Mode::Clip) {
-        drawClipWindow(*committed_);
+    // 裁剪窗口边框不画进提交层：它在预览层绘制（常驻裁剪时所有模式可见，且不被掩码覆盖）
+}
+
+// 常驻裁剪的显示层拷贝：窗口内照抄提交层，窗口外保持背景色（黑）。
+// 不改提交层——关掉开关，原图立即完整恢复。
+void PaintController::copyCommittedClipped(FrameBuffer& fb) const {
+    fb.clear(Color::Black());
+    if (clipWin_.kind == ClipWindow::Kind::Rect) {
+        const int x0 = std::max(0, clipWin_.rect.xmin);
+        const int x1 = std::min(fb.width() - 1, clipWin_.rect.xmax);
+        const int y0 = std::max(0, clipWin_.rect.ymin);
+        const int y1 = std::min(fb.height() - 1, clipWin_.rect.ymax);
+        for (int y = y0; y <= y1; ++y) {
+            for (int x = x0; x <= x1; ++x) {
+                fb.putPixel(x, y, committed_->pixel(x, y));
+            }
+        }
+        return;
+    }
+    // 凸多边形窗口：每条扫描线与凸多边形相交为单段 [lo, hi]，逐段拷贝
+    const auto& poly = clipWin_.poly;
+    float minY = poly.empty() ? 0.0f : poly[0].y;
+    float maxY = minY;
+    for (const auto& p : poly) {
+        minY = std::min(minY, p.y);
+        maxY = std::max(maxY, p.y);
+    }
+    const int yLo = std::max(0, static_cast<int>(std::floor(minY)));
+    const int yHi = std::min(fb.height() - 1, static_cast<int>(std::ceil(maxY)));
+    for (int y = yLo; y <= yHi; ++y) {
+        int lo = std::numeric_limits<int>::max();
+        int hi = std::numeric_limits<int>::min();
+        for (std::size_t i = 0; i < poly.size(); ++i) {
+            const FPoint& p1 = poly[i];
+            const FPoint& p2 = poly[(i + 1) % poly.size()];
+            if ((p1.y <= y) == (p2.y <= y)) {
+                continue; // 该边不跨此扫描线
+            }
+            const float t = (static_cast<float>(y) - p1.y) / (p2.y - p1.y);
+            const int x = static_cast<int>(std::lround(p1.x + (p2.x - p1.x) * t));
+            lo = std::min(lo, x);
+            hi = std::max(hi, x);
+        }
+        for (int x = std::max(0, lo); x <= std::min(fb.width() - 1, hi); ++x) {
+            fb.putPixel(x, y, committed_->pixel(x, y));
+        }
     }
 }
 
@@ -301,6 +348,16 @@ void PaintController::drawPreview(FrameBuffer& fb) const {
         }
     }
 
+    // 裁剪窗口边框（预览层）：常驻裁剪开启时所有模式可见（青色虚线）；
+    // 未开启时仅在裁剪模式显示（白色实线，作为算法演示的背景窗口）
+    if (clipWin_.valid) {
+        if (clipOn_) {
+            drawClipWindow(fb, Color::Cyan(), true);
+        } else if (mode_ == Mode::Clip) {
+            drawClipWindow(fb, Color::White(), false);
+        }
+    }
+
     // 变换模式标记：品红=各选中图形重心，青=当前参考点，黄=等待指定的参考点，橙=A 的对接点
     if (mode_ == Mode::Transform) {
         if (bandSelect_) { // 框选橡皮筋（品红虚线）
@@ -345,7 +402,11 @@ void PaintController::render(FrameBuffer& fb) {
         commitRender();
         dirty_ = false;
     }
-    fb.copyFrom(*committed_); // 提交层 → 显示层
+    if (clipOn_ && clipWin_.valid) {
+        copyCommittedClipped(fb); // 常驻裁剪：窗口外内容不显示
+    } else {
+        fb.copyFrom(*committed_); // 提交层 → 显示层
+    }
     drawPreview(fb);
     drawToolbar(fb);          // 任务栏画在最上层（UI 元素，不属于画布内容）
 }
@@ -371,6 +432,7 @@ void PaintController::onKey(int key, int action) {
     case GLFW_KEY_X: handleAction(Act::Color); break;
     case GLFW_KEY_F: handleAction(Act::PolyFill); break;
     case GLFW_KEY_M: handleAction(Act::ClipAlgo); break;
+    case GLFW_KEY_V: handleAction(Act::ClipToggle); break;
     case GLFW_KEY_K: handleAction(Act::ClipRect); break;
     case GLFW_KEY_P: handleAction(Act::ClipPoly); break;
     case GLFW_KEY_LEFT: handleAction(Act::NudgeL); break;
@@ -486,6 +548,11 @@ void PaintController::handleAction(Act a) {
             markDirty();
         }
         break;
+    case Act::ClipToggle:
+        if (clipWin_.valid) {
+            clipOn_ = !clipOn_; // 常驻裁剪开关：窗口外内容隐藏/恢复（不动提交层）
+        }
+        break;
     case Act::ScaleUp:
     case Act::ScaleDown:
         if (mode_ == Mode::Transform && !selected_.empty()) {
@@ -570,11 +637,11 @@ void PaintController::buildToolbar(std::vector<ToolButton>& btns) const {
     x = add(Act::Color, "COL", x, 22, false);
     if (mode_ == Mode::Polygon) {
         x = add(Act::PolyFill, polygonFilled_ ? "FILL:ON" : "FILL:OFF", x + 8, 22, true);
-        add(Act::PolyClose, "CLOSE", x, 22, false);
+        x = add(Act::PolyClose, "CLOSE", x, 22, false);
     } else if (mode_ == Mode::Clip) {
         x = add(Act::ClipRect, "RECTWIN", x + 8, 22, false);
         x = add(Act::ClipPoly, "POLYWIN", x, 22, false);
-        add(Act::ClipAlgo, "ALGO", x, 22, false);
+        x = add(Act::ClipAlgo, "ALGO", x, 22, false);
     } else if (mode_ == Mode::Transform) {
         x = add(Act::ScaleUp, "+", x + 8, 22, false);
         x = add(Act::ScaleDown, "-", x, 22, false);
@@ -585,7 +652,11 @@ void PaintController::buildToolbar(std::vector<ToolButton>& btns) const {
         x = add(Act::NudgeL, "<", x, 22, false);
         x = add(Act::NudgeR, ">", x, 22, false);
         x = add(Act::NudgeU, "^", x, 22, false);
-        add(Act::NudgeD, "v", x, 22, false);
+        x = add(Act::NudgeD, "v", x, 22, false);
+    }
+    // 常驻裁剪开关：定义过裁剪窗口后所有模式都显示（V 键同效）
+    if (clipWin_.valid) {
+        add(Act::ClipToggle, clipOn_ ? "CLIP:ON" : "CLIP:OFF", x + 8, 22, clipOn_);
     }
 }
 
@@ -659,6 +730,7 @@ void PaintController::setRectClipWindow(IPoint p1, IPoint p2) {
     clipWin_.kind = ClipWindow::Kind::Rect;
     clipWin_.rect = r;
     clipWin_.valid = true;
+    clipOn_ = true; // 显式定义窗口 → 常驻裁剪自动开启
     markDirty();
 }
 
@@ -979,6 +1051,7 @@ void PaintController::onMouseButton(int button, int action, int mods) {
                     clipWin_.poly.push_back({static_cast<float>(p.x), static_cast<float>(p.y)});
                 }
                 clipWin_.valid = true;
+                clipOn_ = true; // 显式定义窗口 → 常驻裁剪自动开启
                 markDirty();
             }
             pendingClipWin_.clear();
@@ -1260,6 +1333,9 @@ std::string PaintController::title() const {
             t += " | 对接:点击图形B轮廓完成拼接（右键取消）";
         }
         break;
+    }
+    if (clipOn_ && clipWin_.valid) {
+        t += " | 裁剪:开（V 关，窗口外内容隐藏）";
     }
     return t;
 }
