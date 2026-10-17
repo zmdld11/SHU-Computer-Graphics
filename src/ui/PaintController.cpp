@@ -63,6 +63,24 @@ constexpr float kPiF = 3.14159265358979f;
 constexpr float kHitTol = 5.0f;   // 选中命中容差（像素）
 constexpr float kSnapTol = 12.0f; // 对接点吸附容差（像素）
 
+// ---- 修饰键约束（Shift 45° 吸附 / Ctrl 定步长） ----
+constexpr float kStepPx = 20.0f; // Ctrl 步进长度（像素，README 已注明可调）
+
+// Shift 约束：把向量方向吸附到 45° 整数倍，保留沿该方向的投影长度（可为负 = 反向）
+FPoint snapDir45(FPoint v) {
+    if (std::fabs(v.x) < 1e-6f && std::fabs(v.y) < 1e-6f) {
+        return v;
+    }
+    const float t = std::round(std::atan2(v.y, v.x) / (kPiF / 4.0f)) * (kPiF / 4.0f);
+    const float len = v.x * std::cos(t) + v.y * std::sin(t);
+    return {std::cos(t) * len, std::sin(t) * len};
+}
+
+// Ctrl 约束：长度按 kStepPx 步进取整（最小 1，避免零长度图形）
+int quantStepLen(float len) {
+    return std::max(1, static_cast<int>(std::lround(std::fabs(len) / kStepPx) * kStepPx));
+}
+
 IPoint roundPt(FPoint p) {
     return {static_cast<int>(std::lround(p.x)), static_cast<int>(std::lround(p.y))};
 }
@@ -133,6 +151,23 @@ raster::LineStyle PaintController::currentStyle() const {
 
 Color PaintController::currentFillColor() const {
     return kPalette[fillColorIdx_];
+}
+
+// 直线拖拽终点：Shift 按住时方向吸附 45° 整数倍（长度取投影分量）
+IPoint PaintController::lineDragEnd() const {
+    if (!shiftHeld_) {
+        return curr_;
+    }
+    const FPoint d = snapDir45({static_cast<float>(curr_.x - press_.x),
+                                static_cast<float>(curr_.y - press_.y)});
+    return {press_.x + static_cast<int>(std::lround(d.x)),
+            press_.y + static_cast<int>(std::lround(d.y))};
+}
+
+// 圆/弧拖拽半径：Ctrl 按住时按 kStepPx（默认 20px）步进取整
+int PaintController::dragRadius() const {
+    const float r = dist(press_, curr_);
+    return ctrlHeld_ ? quantStepLen(r) : static_cast<int>(std::lround(r));
 }
 
 const char* PaintController::clipAlgoName() const {
@@ -294,10 +329,10 @@ void PaintController::copyCommittedClipped(FrameBuffer& fb) const {
 void PaintController::drawPreview(FrameBuffer& fb) const {
     // 进行中的拖拽预览（黄色/绿色为待定内容，不进入提交层）
     if (dragging_) {
-        const int r = static_cast<int>(dist(press_, curr_));
+        const int r = dragRadius(); // 圆/弧半径（Ctrl 步进）
         switch (mode_) {
         case Mode::Line:
-            raster::drawLine(fb, press_, curr_, Color::Yellow(), currentStyle());
+            raster::drawLine(fb, press_, lineDragEnd(), Color::Yellow(), currentStyle());
             break;
         case Mode::Circle:
             if (r >= 1) {
@@ -447,7 +482,9 @@ void PaintController::render(FrameBuffer& fb) {
     drawToolbar(fb);          // 任务栏画在最上层（UI 元素，不属于画布内容）
 }
 
-void PaintController::onKey(int key, int action) {
+void PaintController::onKey(int key, int action, int mods) {
+    shiftHeld_ = (mods & GLFW_MOD_SHIFT) != 0; // 任意事件都刷新修饰键状态（拖拽中按下也生效）
+    ctrlHeld_ = (mods & GLFW_MOD_CONTROL) != 0;
     if (action != GLFW_PRESS && action != GLFW_REPEAT) {
         return;
     }
@@ -1443,10 +1480,20 @@ void PaintController::applyHandleDrag(IPoint pos) {
     if (activeHandle_ == SelHandle::EndA || activeHandle_ == SelHandle::EndB) {
         if (handleShapeIdx_ >= 0 && handleShapeIdx_ < static_cast<int>(shapes_.size())) {
             Shape& s = shapes_[handleShapeIdx_];
-            if (activeHandle_ == SelHandle::EndA) {
-                s.a = pos;
+            const bool endA = activeHandle_ == SelHandle::EndA;
+            const IPoint other = endA ? s.b : s.a;
+            IPoint pt = pos;
+            if (ctrlHeld_) { // Ctrl：线段长度按 kStepPx 步进（方向不变）
+                const FPoint u = unitVec({static_cast<float>(pt.x - other.x),
+                                          static_cast<float>(pt.y - other.y)});
+                const int q = quantStepLen(dist(pt, other));
+                pt = {other.x + static_cast<int>(std::lround(u.x * q)),
+                      other.y + static_cast<int>(std::lround(u.y * q))};
+            }
+            if (endA) {
+                s.a = pt;
             } else {
-                s.b = pos;
+                s.b = pt;
             }
             markDirty();
         }
@@ -1527,7 +1574,8 @@ void PaintController::cancelInProgress() {
 
 void PaintController::onMouseButton(int button, int action, int mods) {
     const bool press = (action == GLFW_PRESS);
-    shiftHeld_ = (mods & GLFW_MOD_SHIFT) != 0;
+    shiftHeld_ = (mods & GLFW_MOD_SHIFT) != 0; // 鼠标事件刷新修饰键状态
+    ctrlHeld_ = (mods & GLFW_MOD_CONTROL) != 0;
 
     // 任务栏优先：点中按钮（或点在栏上）不落到画布
     if (button == 0 && press && toolbarPress(curr_)) {
@@ -1583,7 +1631,7 @@ void PaintController::onMouseButton(int button, int action, int mods) {
                 Shape s;
                 s.mode = Mode::Line;
                 s.a = press_;
-                s.b = curr_;
+                s.b = lineDragEnd(); // Shift：45° 方向吸附
                 s.style = currentStyle();
                 shapes_.push_back(s);
                 markDirty();
@@ -1591,7 +1639,7 @@ void PaintController::onMouseButton(int button, int action, int mods) {
                 Shape s;
                 s.mode = Mode::Circle;
                 s.a = press_;
-                s.radius = static_cast<int>(dist(press_, curr_));
+                s.radius = dragRadius(); // Ctrl：步进半径
                 s.style = currentStyle();
                 shapes_.push_back(s);
                 markDirty();
@@ -1610,7 +1658,7 @@ void PaintController::onMouseButton(int button, int action, int mods) {
                 if (dist(press_, curr_) >= 1.0f) {
                     arcAdjust_ = true;
                     arcCenter_ = press_;
-                    arcRadius_ = static_cast<int>(dist(press_, curr_));
+                    arcRadius_ = dragRadius(); // Ctrl：步进半径
                     arcStart_ = angleOf(curr_, press_);
                 }
             }
@@ -1760,7 +1808,13 @@ void PaintController::onMouseButton(int button, int action, int mods) {
                 }
                 if (sel) { // 在选中集合里才可拖拽平移
                     xformDrag_ = true;
-                    lastDrag_ = curr_;
+                    lastDrag_ = curr_; // 拖拽起点（绝对式平移的锚）
+                    selSnapshot_.clear();
+                    for (int idx : selected_) {
+                        if (idx >= 0 && idx < static_cast<int>(shapes_.size())) {
+                            selSnapshot_.push_back(shapes_[idx]);
+                        }
+                    }
                 }
             } else { // 点空白：进入框选拖拽，松开时结算（原地微点=清除选中）
                 bandSelect_ = true;
@@ -1823,18 +1877,31 @@ void PaintController::onMouseButton(int button, int action, int mods) {
     }
 }
 
-void PaintController::onMouseMove(IPoint pos) {
+void PaintController::onMouseMove(IPoint pos, int mods) {
+    shiftHeld_ = (mods & GLFW_MOD_SHIFT) != 0; // 移动事件实时反映修饰键（GLFW 光标回调无 mods，
+    ctrlHeld_ = (mods & GLFW_MOD_CONTROL) != 0; // 由 Window 层查询键盘状态补齐）
     // 控制柄拖拽：端点编辑 / bbox 缩放（每帧从快照重算，与拖拽平移互斥）
     if (handleDrag_ && mode_ == Mode::Transform) {
         applyHandleDrag(pos);
     }
-    // 拖拽平移：以像素为步长的增量平移（整数增量，无舍入累积）
+    // 拖拽平移：绝对式——从拖拽开始的快照整体平移到当前偏移（整数结果零累积）；
+    // Shift 按住时偏移方向吸附 45° 整数倍（水平/垂直/对角线）
     if (xformDrag_ && mode_ == Mode::Transform && !selected_.empty()) {
-        const float dx = static_cast<float>(pos.x - curr_.x);
-        const float dy = static_cast<float>(pos.y - curr_.y);
-        if (dx != 0.0f || dy != 0.0f) {
-            transformSelected(geom::translate(dx, dy), 0.0f, 1.0f);
+        FPoint off{static_cast<float>(pos.x - lastDrag_.x),
+                   static_cast<float>(pos.y - lastDrag_.y)};
+        if (shiftHeld_) {
+            off = snapDir45(off);
         }
+        const geom::Mat3 m = geom::translate(off.x, off.y);
+        for (std::size_t k = 0; k < selected_.size() && k < selSnapshot_.size(); ++k) {
+            const int idx = selected_[k];
+            if (idx < 0 || idx >= static_cast<int>(shapes_.size())) {
+                continue;
+            }
+            shapes_[idx] = selSnapshot_[k];
+            applyToShape(shapes_[idx], m, 0.0f, 1.0f);
+        }
+        markDirty();
     }
     // 曲线控制点拖拽：改参数（控制点），像素由提交层重算——实时跟随
     if (curveDrag_ && mode_ == Mode::Curve && dragShapeIdx_ >= 0 &&
@@ -1861,6 +1928,11 @@ std::string PaintController::title() const {
         t += kStyleNames[styleIdx_];
         t += " 宽";
         t += std::to_string(kWidths[widthIdx_]);
+        if (mode_ == Mode::Line) {
+            t += " | Shift=45°吸附";
+        } else {
+            t += " | Ctrl=半径步进20px";
+        }
         if (arcAdjust_) {
             t += " | 圆弧：移动鼠标调终止角，左键确认";
         }
@@ -1887,7 +1959,7 @@ std::string PaintController::title() const {
         t += std::to_string(selected_.size());
         t += " 参考点:";
         t += refManual_ ? "指定" : "重心";
-        t += " | 左键选(Shift加选) 空白拖拽框选 拖拽/方向键平移 柄缩放(线段拖端点) Del删除 +−缩放 R/T旋转 G参考点 J对接";
+        t += " | 左键选(Shift加选) 空白拖拽框选 拖拽/方向键平移(Shift=45°) 柄缩放(线段拖端点 Ctrl=步进) Del删除 +−缩放 R/T旋转 G参考点 J对接";
         if (refPick_) {
             t += " | 点击画布指定参考点";
         }
