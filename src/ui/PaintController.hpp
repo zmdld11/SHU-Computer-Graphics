@@ -42,6 +42,7 @@ public:
         ClipRect, ClipPoly, ClipAlgo, ClipToggle,
         ScaleUp, ScaleDown, RotCW, RotCCW, RefPoint, Dock,
         NudgeL, NudgeR, NudgeU, NudgeD,
+        DeleteSel,
     };
     struct ToolButton {
         Act act = Act::None;
@@ -109,6 +110,19 @@ private:
     // 点击点吸附到某图形轮廓的最近点（对接点），返回该图形下标；skipIdx 用于选 B 时跳过 A
     int pickOutlineShape(IPoint p, FPoint& outPt, FPoint& outTan, int skipIdx = -1) const;
 
+    // ---- 画板式选择编辑（实验三增强：外接矩形 + 控制柄 + 高亮） ----
+    // 选中控制柄：线段端点柄（仅单选线段时出现），或选中集合外接矩形的 8 向柄
+    // （选中含圆/弧时只给 4 角柄 = 等比缩放，无椭圆图元表达非等比结果）
+    enum class SelHandle { None = 0, EndA, EndB, NW, N, NE, E, SE, S, SW, W };
+    raster::Rect shapeBounds(const Shape& s) const;       // 单图形最小外接矩形
+    raster::Rect selectionBounds() const;                 // 选中集合外接矩形（并集）
+    bool selectionUniformOnly() const;                    // 选中含圆/弧 → 只允许等比
+    bool selEndpointsMode() const;                        // 恰好单选一条线段 → 端点编辑模式
+    SelHandle pickHandle(IPoint p) const;                 // 命中控制柄（先于图形命中）
+    void drawSelection(FrameBuffer& fb) const;            // 高亮重描 + 虚线外接矩形 + 控制柄
+    void drawHandleBox(FrameBuffer& fb, IPoint c, bool hot) const; // 实心方柄
+    void applyHandleDrag(IPoint pos);                     // 柄拖拽中：从快照重算选中图形
+
     // ---- 状态变更 ----
     void markDirty() { dirty_ = true; }
     void closePolygon();
@@ -173,6 +187,13 @@ private:
     int dockAShapeIdx_ = -1;     // 图形 A 的下标
     FPoint dockA_{};             // A 上的对接点
     FPoint dockATangent_{};      // A 对接点的单位切向
+
+    // 画板式选择编辑状态
+    bool handleDrag_ = false;              // 控制柄拖拽进行中
+    SelHandle activeHandle_ = SelHandle::None;
+    int handleShapeIdx_ = -1;              // 端点柄所属线段下标
+    raster::Rect selBounds0_{};            // 柄拖拽开始时的选中集合外接矩形
+    std::vector<Shape> selSnapshot_;       // 柄拖拽开始时选中图形快照（每帧从快照重算，防整型烘焙漂移）
 
     // 提交层缓存
     std::unique_ptr<FrameBuffer> committed_;
