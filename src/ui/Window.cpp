@@ -15,12 +15,11 @@ bool g_glfwReady = false;
 
 void Window::glfwKey(GLFWwindow* window, int key, int scancode, int action, int mods) {
     (void)scancode;
-    (void)mods;
     if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS) {
         glfwSetWindowShouldClose(window, GLFW_TRUE);
     }
     if (s_active != nullptr && s_active->onKey_) {
-        s_active->onKey_(key, action);
+        s_active->onKey_(key, action, mods);
     }
 }
 
@@ -32,9 +31,18 @@ void Window::glfwMouseButton(GLFWwindow* window, int button, int action, int mod
 }
 
 void Window::glfwCursorPos(GLFWwindow* window, double x, double y) {
-    (void)window;
     if (s_active == nullptr || !s_active->onMouseMove_) {
         return;
+    }
+    // 光标回调不带 mods：用 glfwGetKey 查询当前修饰键状态（约束类交互拖拽中生效）
+    int mods = 0;
+    if (glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS ||
+        glfwGetKey(window, GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS) {
+        mods |= GLFW_MOD_SHIFT;
+    }
+    if (glfwGetKey(window, GLFW_KEY_LEFT_CONTROL) == GLFW_PRESS ||
+        glfwGetKey(window, GLFW_KEY_RIGHT_CONTROL) == GLFW_PRESS) {
+        mods |= GLFW_MOD_CONTROL;
     }
     // 鼠标坐标从窗口逻辑坐标换算到帧缓冲像素（适配高 DPI 缩放）
     int fw = 0, fh = 0, ww = 0, wh = 0;
@@ -43,7 +51,7 @@ void Window::glfwCursorPos(GLFWwindow* window, double x, double y) {
     if (ww <= 0 || wh <= 0) {
         return;
     }
-    s_active->onMouseMove_(x * fw / ww, y * fh / wh);
+    s_active->onMouseMove_(x * fw / ww, y * fh / wh, mods);
 }
 
 void Window::glfwFramebufferSize(GLFWwindow* window, int width, int height) {

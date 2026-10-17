@@ -676,6 +676,88 @@ int runAlgorithmSelfChecks() {
         expect(ctrl.title().find("选中:0") != std::string::npos, "sel: 删除后清空选中");
     }
 
+    // ================= 修饰键约束（Shift 45° 吸附 / Ctrl 定步长） =================
+    {
+        PaintController ctrl;
+        FrameBuffer canvas(kWidth, kHeight);
+        const Color HI(255, 150, 40);
+
+        // Shift 画线：方向吸附到 0°（水平）——终点 (140,113) 的斜向被吸附为 (140,100)
+        ctrl.onKey(GLFW_KEY_1, GLFW_PRESS);
+        ctrl.onMouseMove({100, 100});
+        ctrl.onMouseButton(0, GLFW_PRESS);
+        ctrl.onMouseMove({140, 113}, GLFW_MOD_SHIFT);
+        ctrl.onMouseButton(0, GLFW_RELEASE, GLFW_MOD_SHIFT);
+        ctrl.onMouseMove({50, 550});
+        ctrl.render(canvas);
+        expect(canvas.pixel(120, 100) == Color::White() && canvas.pixel(120, 101) == Color::Black(),
+               "mod: Shift 画线吸附为水平线");
+        expect(canvas.pixel(140, 100) == Color::White() && canvas.pixel(140, 113) == Color::Black(),
+               "mod: Shift 吸附终点在投影长度处");
+
+        // Shift 画线：吸附到 45°（(233,244)≈52.8° → 对角线，投影长 54.45 → (238,238)）
+        ctrl.onMouseMove({200, 200}, GLFW_MOD_SHIFT);
+        ctrl.onMouseButton(0, GLFW_PRESS, GLFW_MOD_SHIFT);
+        ctrl.onMouseMove({233, 244}, GLFW_MOD_SHIFT);
+        ctrl.onMouseButton(0, GLFW_RELEASE, GLFW_MOD_SHIFT);
+        ctrl.onMouseMove({50, 550});
+        ctrl.render(canvas);
+        expect(canvas.pixel(220, 220) == Color::White(), "mod: Shift 画线吸附 45° 对角线");
+
+        // Ctrl 画圆：半径 37 步进为 40
+        ctrl.onKey(GLFW_KEY_E, GLFW_PRESS);
+        ctrl.onKey(GLFW_KEY_2, GLFW_PRESS);
+        ctrl.onMouseMove({400, 300});
+        ctrl.onMouseButton(0, GLFW_PRESS);
+        ctrl.onMouseMove({437, 300}, GLFW_MOD_CONTROL);
+        ctrl.onMouseButton(0, GLFW_RELEASE, GLFW_MOD_CONTROL);
+        ctrl.onMouseMove({50, 550});
+        ctrl.render(canvas);
+        expect(canvas.pixel(440, 300) == Color::White(), "mod: Ctrl 半径步进到 40");
+        expect(canvas.pixel(437, 300) == Color::Black(), "mod: 步进外的 37 处无像素");
+
+        // Ctrl 拖线段端点：长度 153 步进为 160
+        ctrl.onKey(GLFW_KEY_E, GLFW_PRESS);
+        ctrl.onKey(GLFW_KEY_1, GLFW_PRESS);
+        ctrl.onMouseMove({100, 100});
+        ctrl.onMouseButton(0, GLFW_PRESS);
+        ctrl.onMouseMove({200, 100});
+        ctrl.onMouseButton(0, GLFW_RELEASE);
+        ctrl.onKey(GLFW_KEY_7, GLFW_PRESS);
+        ctrl.onMouseMove({150, 100}); // 点线中段选中 → 端点编辑模式
+        ctrl.onMouseButton(0, GLFW_PRESS);
+        ctrl.onMouseButton(0, GLFW_RELEASE);
+        ctrl.onMouseMove({200, 100}); // 抓住端点 b
+        ctrl.onMouseButton(0, GLFW_PRESS);
+        ctrl.onMouseMove({253, 100}, GLFW_MOD_CONTROL);
+        ctrl.onMouseButton(0, GLFW_RELEASE, GLFW_MOD_CONTROL);
+        ctrl.onMouseMove({50, 550});
+        ctrl.render(canvas);
+        expect(canvas.pixel(250, 100) == HI, "mod: Ctrl 端点步进延伸线段");
+        expect(canvas.pixel(270, 100) == Color::Black(), "mod: 端点柄落在 260（160px 步进）");
+
+        // Shift 拖动平移：偏移 (25,40)≈58° 吸附为 45° 对角 → 线从 y=300 沿对角移到 y≈333
+        ctrl.onKey(GLFW_KEY_E, GLFW_PRESS);
+        ctrl.onKey(GLFW_KEY_1, GLFW_PRESS);
+        ctrl.onMouseMove({100, 300});
+        ctrl.onMouseButton(0, GLFW_PRESS);
+        ctrl.onMouseMove({150, 300});
+        ctrl.onMouseButton(0, GLFW_RELEASE);
+        ctrl.onKey(GLFW_KEY_7, GLFW_PRESS);
+        ctrl.onMouseMove({125, 300});
+        ctrl.onMouseButton(0, GLFW_PRESS); // 选中并开始拖拽（无 Shift）
+        ctrl.onMouseButton(0, GLFW_RELEASE);
+        ctrl.onMouseMove({125, 300});
+        ctrl.onMouseButton(0, GLFW_PRESS);
+        ctrl.onMouseMove({150, 340}, GLFW_MOD_SHIFT); // 拖动中按 Shift → 45°
+        ctrl.onMouseButton(0, GLFW_RELEASE, GLFW_MOD_SHIFT);
+        ctrl.onMouseMove({50, 550});
+        ctrl.render(canvas);
+        // 探针避开线中点的参考点十字（横臂 ±6）与端点柄（±3）：取 (145,333)
+        expect(canvas.pixel(145, 333) == HI, "mod: Shift 拖动沿 45° 对角移动");
+        expect(canvas.pixel(145, 300) == Color::Black(), "mod: 原水平位置已空");
+    }
+
     // ================= extension：常驻裁剪（窗口独立于模式，持续生效可开关） =================
     {
         PaintController ctrl;

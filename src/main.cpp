@@ -101,6 +101,16 @@ int main(int argc, char** argv) {
         drag(-300, -200, 1200, 900); // 直线：两端远在画布外
         key(GLFW_KEY_1);
         drag(-100, 500, 900, 100); // 直线：起点画布外，横穿画布
+        key(GLFW_KEY_1); // Shift 约束：45° 吸附画线
+        ctrl.onMouseMove({50, 80});
+        ctrl.onMouseButton(0, GLFW_PRESS);
+        ctrl.onMouseMove({300, 230}, GLFW_MOD_SHIFT);
+        ctrl.onMouseButton(0, GLFW_RELEASE, GLFW_MOD_SHIFT);
+        key(GLFW_KEY_2); // Ctrl 约束：半径 37 步进为 40
+        ctrl.onMouseMove({650, 500});
+        ctrl.onMouseButton(0, GLFW_PRESS);
+        ctrl.onMouseMove({687, 500}, GLFW_MOD_CONTROL);
+        ctrl.onMouseButton(0, GLFW_RELEASE, GLFW_MOD_CONTROL);
         key(GLFW_KEY_2);
         drag(650, 120, -500, -400); // 圆：超大半径，绝大部分在画布外
         key(GLFW_KEY_3); // 弧：两阶段提交（圆心/半径/起始角 → 调终止角）
@@ -184,11 +194,13 @@ int main(int argc, char** argv) {
         liveCanvas.resize(w, h);
     });
 
-    window.setOnKey([&ctrl](int key, int action) { ctrl.onKey(key, action); });
+    window.setOnKey([&ctrl](int key, int action, int mods) { ctrl.onKey(key, action, mods); });
     window.setOnMouseButton([&ctrl](int button, int action, int mods) {
         ctrl.onMouseButton(button, action, mods);
     });
-    window.setOnMouseMove([&ctrl](double x, double y) { ctrl.onMouseMove({int(x), int(y)}); });
+    window.setOnMouseMove([&ctrl](double x, double y, int mods) {
+        ctrl.onMouseMove({int(x), int(y)}, mods);
+    });
 
     while (!window.shouldClose()) {
         // 1. 画出这一帧所有的像素

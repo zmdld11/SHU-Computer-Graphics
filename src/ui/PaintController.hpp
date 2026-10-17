@@ -21,9 +21,10 @@ namespace cg {
 class PaintController {
 public:
     // key 用 GLFW 键码；button: 0=左键 1=右键；action: 0=释放 1=按下；mods: GLFW 修饰键位集
-    void onKey(int key, int action);
+    // （键盘/鼠标/移动三类事件都带 mods，用于 Shift 吸附、Ctrl 步进等约束类交互）
+    void onKey(int key, int action, int mods = 0);
     void onMouseButton(int button, int action, int mods = 0);
-    void onMouseMove(IPoint pos);
+    void onMouseMove(IPoint pos, int mods = 0);
 
     // 每帧调用：必要时重绘提交层，然后拷贝 + 叠加预览
     void render(FrameBuffer& fb);
@@ -90,6 +91,8 @@ private:
     // ---- 绘制 ----
     raster::LineStyle currentStyle() const;
     Color currentFillColor() const;
+    IPoint lineDragEnd() const; // 直线拖拽终点（Shift：方向吸附 45° 整数倍）
+    int dragRadius() const;     // 圆/弧拖拽半径（Ctrl：kStepPx 步进）
     void drawShape(FrameBuffer& fb, const Shape& s) const;
     void drawClipWindow(FrameBuffer& fb, const Color& c, bool dashed) const;
     void drawPreview(FrameBuffer& fb) const;
@@ -146,6 +149,8 @@ private:
     int widthIdx_ = 0;     // 0/1/2 → 1/3/5
     int fillColorIdx_ = 0; // 填充色调色板下标
     std::vector<Shape> shapes_;
+    bool shiftHeld_ = false; // 最近一次事件的 Shift 状态（多选 / 45° 吸附）
+    bool ctrlHeld_ = false;  // 最近一次事件的 Ctrl 状态（定步长缩放）
 
     // 拖拽 / 圆弧 / 多边形输入状态
     bool dragging_ = false;
@@ -175,7 +180,6 @@ private:
 
     // 变换状态（实验三）
     std::vector<int> selected_;  // 选中图形的下标（shapes_ 内）
-    bool shiftHeld_ = false;     // 最近一次鼠标事件是否带 Shift（多选）
     bool xformDrag_ = false;     // 拖拽平移进行中
     IPoint lastDrag_{};          // 上一次增量平移的参考位置
     bool bandSelect_ = false;    // 框选拖拽进行中（空白处按下）

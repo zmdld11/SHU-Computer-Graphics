@@ -13,9 +13,10 @@ namespace cg {
 // 单窗口应用：回调经静态实例路由。
 class Window {
 public:
-    using KeyFn = std::function<void(int key, int action)>;
-    using MouseBtnFn = std::function<void(int button, int action, int mods)>; // mods 用于 Shift 多选
-    using MouseMoveFn = std::function<void(double x, double y)>;
+    // mods = GLFW 修饰键位集（Shift/Ctrl 等约束类交互用）
+    using KeyFn = std::function<void(int key, int action, int mods)>;
+    using MouseBtnFn = std::function<void(int button, int action, int mods)>;
+    using MouseMoveFn = std::function<void(double x, double y, int mods)>;
     using ResizeFn = std::function<void(int fbWidth, int fbHeight)>;
 
     // hidden = true 时窗口不可见，用于 --smoke 自检
