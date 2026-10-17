@@ -864,6 +864,138 @@ int runAlgorithmSelfChecks() {
         expect(canvas.pixel(450, 450) == Color::Black(), "tb: 清屏按钮清屏");
     }
 
+    // ================= 越界绘制防护（画布外坐标不崩溃，落点被安全钳制） =================
+    {
+        FrameBuffer oob(kWidth, kHeight);
+
+        // 缓冲尺寸不变量：resize/copyFrom 之后尺寸与像素数组必须同步
+        oob.resize(300, 200);
+        expect(oob.pixel(299, 199) == Color::Black() && oob.pixel(-1, -1) == Color::Black(),
+               "oob: resize 后读写仍安全");
+        FrameBuffer small(50, 40);
+        small.putPixel(10, 10, FC);
+        oob.copyFrom(small);
+        expect(oob.pixel(10, 10) == FC && oob.pixel(300, 199) == Color::Black(),
+               "oob: copyFrom 尺寸同步且越界读安全");
+        oob.resize(kWidth, kHeight);
+
+        // 直线两端远在画布外：仍应斜穿画布
+        oob.clear(Color::Black());
+        drawLine(oob, {-100, -100}, {2000, 1500}, W, {});
+        bool crossesMid = false;
+        for (int dy = -2; dy <= 2 && !crossesMid; ++dy) {
+            for (int dx = -2; dx <= 2; ++dx) {
+                if (oob.pixel(400 + dx, 281 + dy) == W) {
+                    crossesMid = true;
+                    break;
+                }
+            }
+        }
+        expect(crossesMid, "oob: 画布外端点直线穿过画布内部");
+
+        // 线宽 5 画到画布右下角：笔刷越界部分被钳制
+        oob.clear(Color::Black());
+        drawLine(oob, {700, 550}, {799, 599}, W, {0xFFFFu, 5});
+        expect(oob.pixel(799, 599) == W, "oob: 宽线画到画布角端点存在");
+
+        // 圆心在画布外：落在画布内的轴点仍正确
+        oob.clear(Color::Black());
+        drawCircle(oob, {-50, 300}, 200, W, {});
+        expect(oob.pixel(150, 300) == W, "oob: 圆心在画布外左，右轴点正确");
+        oob.clear(Color::Black());
+        drawCircle(oob, {400, -100}, 200, W, {});
+        expect(oob.pixel(400, 100) == W, "oob: 圆心在画布外上，下轴点正确");
+
+        // 扫描线填充：顶点远在画布外的三角形
+        oob.clear(Color::Black());
+        const std::vector<IPoint> bigTri = {{-200, 100}, {500, -150}, {300, 900}};
+        scanlineFillPolygon(oob, bigTri, FC);
+        expect(oob.pixel(200, 283) == FC, "oob: 出界多边形填充重心正确");
+
+        // 种子填充：画布外种子安全忽略；画布角落种子填背景区但不越白色边界
+        oob.clear(Color::Black());
+        drawLine(oob, {50, 50}, {150, 50}, W, {});
+        drawLine(oob, {150, 50}, {150, 150}, W, {});
+        drawLine(oob, {150, 150}, {50, 150}, W, {});
+        drawLine(oob, {50, 150}, {50, 50}, W, {});
+        const Color FC2(230, 120, 40);
+        scanlineSeedFill(oob, {60, 60}, FC2);
+        expect(oob.pixel(60, 60) == FC2, "oob: 框内种子正常填充");
+        scanlineSeedFill(oob, {-5, -5}, Color::Magenta());
+        expect(oob.pixel(60, 60) == FC2, "oob: 画布外种子被忽略");
+        const Color FC3(90, 220, 90);
+        scanlineSeedFill(oob, {2, 2}, FC3);
+        expect(oob.pixel(10, 10) == FC3 && oob.pixel(60, 60) == FC2, "oob: 角落种子填背景不越界");
+    }
+
+    // ================= 越界交互（无窗口模拟：出界画图/拖拽/极小窗口） =================
+    {
+        PaintController ctrl;
+        FrameBuffer canvas(kWidth, kHeight);
+        auto click = [&](int x, int y) {
+            ctrl.onMouseMove({x, y});
+            ctrl.onMouseButton(0, GLFW_PRESS);
+            ctrl.onMouseButton(0, GLFW_RELEASE);
+        };
+        auto drag = [&](int x0, int y0, int x1, int y1) {
+            ctrl.onMouseMove({x0, y0});
+            ctrl.onMouseButton(0, GLFW_PRESS);
+            ctrl.onMouseMove({x1, y1});
+            ctrl.onMouseButton(0, GLFW_RELEASE);
+        };
+
+        // 曲线：首末控制点在画布外，曲线体应仍横穿画布
+        ctrl.onKey(GLFW_KEY_8, GLFW_PRESS);
+        const IPoint cpts[4] = {{-100, -50}, {300, 100}, {500, 500}, {900, 700}};
+        for (const auto& pt : cpts) {
+            click(pt.x, pt.y);
+        }
+        ctrl.onMouseButton(1, GLFW_PRESS); // 右键提交
+        ctrl.render(canvas);
+        bool curveMid = false;
+        for (int dy = -3; dy <= 3 && !curveMid; ++dy) {
+            for (int dx = -3; dx <= 3; ++dx) {
+                if (canvas.pixel(400 + dx, 306 + dy) != Color::Black()) {
+                    curveMid = true;
+                    break;
+                }
+            }
+        }
+        expect(curveMid, "ui-oob: 出界控制点曲线仍穿过画布");
+
+        // 变换：圆拖出画布深处再拖回，圆心应精确回到原位
+        ctrl.onKey(GLFW_KEY_2, GLFW_PRESS);
+        drag(400, 300, 450, 300); // 圆心 (400,300) 半径 50
+        ctrl.onKey(GLFW_KEY_7, GLFW_PRESS);
+        click(450, 300); // 点右轴点选中
+        drag(450, 300, -1750, -1900); // 拖出画布
+        ctrl.render(canvas);
+        expect(canvas.pixel(450, 300) == Color::Black(), "ui-oob: 圆拖出画布后原位无像素");
+        drag(-1750, -1900, 450, 300); // 从画布外按住圆拖回
+        ctrl.render(canvas);
+        expect(canvas.pixel(450, 300) != Color::Black(), "ui-oob: 圆从画布外拖回原位");
+
+        // 超大矩形框选（含画布外图形）+ 方向键微移
+        drag(-2000, -2000, 2000, 2000);
+        for (int i = 0; i < 5; ++i) {
+            ctrl.onKey(GLFW_KEY_RIGHT, GLFW_PRESS);
+        }
+        ctrl.render(canvas);
+        ctrl.render(canvas);
+        expect(canvas.pixel(455, 300) != Color::Black() && canvas.pixel(450, 300) == Color::Black(),
+               "ui-oob: 框选后方向键微移生效");
+
+        // 最小合法常驻裁剪窗口（8×8，小于 8px 的会被忽略）：只显示窗口内像素
+        ctrl.onKey(GLFW_KEY_6, GLFW_PRESS);
+        ctrl.onKey(GLFW_KEY_K, GLFW_PRESS);
+        drag(100, 100, 108, 108);
+        drag(0, 100, 200, 100);
+        ctrl.render(canvas);
+        expect(canvas.pixel(100, 100) == Color::Green(), "ui-oob: 8×8 窗口内为裁剪结果");
+        expect(canvas.pixel(112, 100) != Color::Green() && canvas.pixel(140, 100) != Color::Green(),
+               "ui-oob: 8×8 窗口外不显示绿色");
+    }
+
     return fails;
 }
 

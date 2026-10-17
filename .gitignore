@@ -54,3 +54,6 @@ desktop.ini
 *.log
 *.tmp
 ~$*
+
+# ===== 运行产物（--demo/--stress-ui 等导出，可随时重新生成） =====
+*.ppm

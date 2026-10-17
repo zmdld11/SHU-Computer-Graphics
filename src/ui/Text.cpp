@@ -75,7 +75,14 @@ const GlyphBitmap& glyph(wchar_t ch) {
         g.h = static_cast<int>(gm.gmBlackBoxY);
         g.originY = static_cast<int>(gm.gmptGlyphOrigin.y);
         g.advanceX = static_cast<int>(gm.gmCellIncX);
-        g.bits = std::move(buf);
+        // 两次调用的度量可能不一致（字体回退/驱动异常）：按黑盒尺寸核算缓冲，
+        // 不够就弃用点阵只留步进宽，防止 drawText 里 line[col/8] 越界读
+        const std::size_t rowBytes = (static_cast<std::size_t>(g.w) + 31) / 32 * 4;
+        if (rowBytes * static_cast<std::size_t>(g.h) > buf.size()) {
+            g.bits.clear();
+        } else {
+            g.bits = std::move(buf);
+        }
     } else if (GetCharWidth32W(gDc, ch, ch, &g.advanceX) == 0) {
         g.advanceX = kFontHeight / 2; // 取不到度量：留半个字宽的空位
     }

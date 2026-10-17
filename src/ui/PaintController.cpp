@@ -766,7 +766,9 @@ void PaintController::drawToolbar(FrameBuffer& fb) const {
 
 bool PaintController::toolbarPress(IPoint p) {
     const int tbH = toolbarHeight();
-    if (p.y >= tbH) {
+    // 负坐标是拖拽到窗口外时的越界鼠标事件，不属于任务栏：放行给画布逻辑，
+    // 否则按住图形拖出窗口上缘再回来会"松不开"（按下/释放被吞）
+    if (p.y < 0 || p.y >= tbH || p.x < 0) {
         return false;
     }
     std::vector<ToolButton> btns;
@@ -778,7 +780,7 @@ bool PaintController::toolbarPress(IPoint p) {
             return true;
         }
     }
-    return p.y < tbH; // 点在栏上但没点中按钮：吞掉事件，不落到画布
+    return true; // 点在栏上但没点中按钮：吞掉事件，不落到画布
 }
 
 void PaintController::closePolygon() {
