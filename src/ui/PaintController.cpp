@@ -399,7 +399,7 @@ void PaintController::drawPreview(FrameBuffer& fb) const {
         }
     }
 
-    // 变换模式标记：品红=各选中图形重心，青=当前参考点，黄=等待指定的参考点，橙=A 的对接点
+    // 变换模式标记：选中=橙色高亮+虚线外接矩形+控制柄；青=当前参考点，黄=等待指定的参考点，橙=A 的对接点
     if (mode_ == Mode::Transform) {
         if (bandSelect_) { // 框选橡皮筋（品红虚线）
             const raster::Rect band = rectFrom(bandStart_, curr_);
@@ -412,12 +412,7 @@ void PaintController::drawPreview(FrameBuffer& fb) const {
             raster::drawLine(fb, {band.xmin, band.ymax}, {band.xmin, band.ymin}, Color::Magenta(),
                              {0xF0F0u, 1});
         }
-        for (int idx : selected_) {
-            if (idx < 0 || idx >= static_cast<int>(shapes_.size())) {
-                continue;
-            }
-            drawCross(fb, roundPt(shapeCentroid(shapes_[idx])), Color::Magenta(), 4);
-        }
+        drawSelection(fb); // 画板式选择：高亮重描 + 外接矩形 + 控制柄（替代旧的重心十字）
         if (!selected_.empty()) {
             drawCross(fb, roundPt(activeRefPoint()), Color::Cyan(), 6);
         }
@@ -488,6 +483,8 @@ void PaintController::onKey(int key, int action) {
     case GLFW_KEY_R: handleAction(Act::RotCCW); break;
     case GLFW_KEY_G: handleAction(Act::RefPoint); break;
     case GLFW_KEY_J: handleAction(Act::Dock); break;
+    case GLFW_KEY_DELETE:
+    case GLFW_KEY_BACKSPACE: handleAction(Act::DeleteSel); break;
     case GLFW_KEY_E: handleAction(Act::Clear); break;
     default:
         break;
@@ -649,6 +646,23 @@ void PaintController::handleAction(Act a) {
             transformSelected(geom::translate(dx, dy), 0.0f, 1.0f);
         }
         break;
+    case Act::DeleteSel:
+        if (mode_ == Mode::Transform && !selected_.empty()) {
+            // 从大到小删除，避免下标位移；删完清空选中
+            std::vector<int> ordered = selected_;
+            std::sort(ordered.rbegin(), ordered.rend());
+            for (int idx : ordered) {
+                if (idx >= 0 && idx < static_cast<int>(shapes_.size())) {
+                    shapes_.erase(shapes_.begin() + idx);
+                }
+            }
+            selected_.clear();
+            selSnapshot_.clear();
+            handleDrag_ = false;
+            activeHandle_ = SelHandle::None;
+            markDirty();
+        }
+        break;
     case Act::None:
     default:
         break;
@@ -720,6 +734,7 @@ void PaintController::buildToolbar(std::vector<ToolButton>& btns) const {
         x = add(Act::RotCW, "T 顺旋", x, y2, false);
         x = add(Act::RefPoint, "G 参考点", x, y2, refManual_);
         x = add(Act::Dock, "J 对接", x, y2, dockStage_ > 0);
+        x = add(Act::DeleteSel, "Del 删除", x, y2, false);
         x = add(Act::NudgeL, "←", x, y2, false);
         x = add(Act::NudgeR, "→", x, y2, false);
         x = add(Act::NudgeU, "↑", x, y2, false);
@@ -1217,6 +1232,276 @@ int PaintController::pickOutlineShape(IPoint p, FPoint& outPt, FPoint& outTan, i
     return -1;
 }
 
+// ================= 画板式选择编辑（实验三增强：外接矩形 + 控制柄 + 高亮） =================
+
+// 单图形最小外接矩形（矩形字段为像素闭区间）
+raster::Rect PaintController::shapeBounds(const Shape& s) const {
+    switch (s.mode) {
+    case Mode::Line:
+        return rectFrom(s.a, s.b);
+    case Mode::Circle:
+        return {s.a.x - s.radius, s.a.y - s.radius, s.a.x + s.radius, s.a.y + s.radius};
+    case Mode::Arc: {
+        // 沿弧采样取范围（含两端点；步长 5° 足以覆盖轴向极值）
+        const float span = normDeg(s.endDeg - s.startDeg);
+        if (span <= 0.0f) { // 整圆
+            return {s.a.x - s.radius, s.a.y - s.radius, s.a.x + s.radius, s.a.y + s.radius};
+        }
+        raster::Rect r{s.a.x, s.a.y, s.a.x, s.a.y};
+        const int steps = std::max(2, static_cast<int>(span / 5.0f) + 1);
+        for (int k = 0; k <= steps; ++k) {
+            const float rad = normDeg(s.startDeg + span * k / steps) * kPiF / 180.0f;
+            const int x = s.a.x + static_cast<int>(std::lround(s.radius * std::cos(rad)));
+            const int y = s.a.y + static_cast<int>(std::lround(s.radius * std::sin(rad)));
+            r.xmin = std::min(r.xmin, x);
+            r.ymin = std::min(r.ymin, y);
+            r.xmax = std::max(r.xmax, x);
+            r.ymax = std::max(r.ymax, y);
+        }
+        return r;
+    }
+    case Mode::Polygon: {
+        if (s.polygon.empty()) {
+            return {s.a.x, s.a.y, s.a.x, s.a.y};
+        }
+        raster::Rect r{s.polygon[0].x, s.polygon[0].y, s.polygon[0].x, s.polygon[0].y};
+        for (const auto& p : s.polygon) {
+            r.xmin = std::min(r.xmin, p.x);
+            r.ymin = std::min(r.ymin, p.y);
+            r.xmax = std::max(r.xmax, p.x);
+            r.ymax = std::max(r.ymax, p.y);
+        }
+        return r;
+    }
+    case Mode::Curve: {
+        // 外接矩形取采样折线范围（比控制点范围更贴合曲线本体）
+        const std::vector<FPoint> samples = curveSamples(s);
+        if (samples.empty()) {
+            return {s.a.x, s.a.y, s.a.x, s.a.y};
+        }
+        raster::Rect r{static_cast<int>(samples[0].x), static_cast<int>(samples[0].y),
+                       static_cast<int>(samples[0].x), static_cast<int>(samples[0].y)};
+        for (const auto& q : samples) {
+            const int x = static_cast<int>(std::lround(q.x));
+            const int y = static_cast<int>(std::lround(q.y));
+            r.xmin = std::min(r.xmin, x);
+            r.ymin = std::min(r.ymin, y);
+            r.xmax = std::max(r.xmax, x);
+            r.ymax = std::max(r.ymax, y);
+        }
+        return r;
+    }
+    default:
+        return {s.a.x, s.a.y, s.a.x, s.a.y};
+    }
+}
+
+raster::Rect PaintController::selectionBounds() const {
+    raster::Rect r{0, 0, 0, 0};
+    bool first = true;
+    for (int idx : selected_) {
+        if (idx < 0 || idx >= static_cast<int>(shapes_.size())) {
+            continue;
+        }
+        const raster::Rect b = shapeBounds(shapes_[idx]);
+        if (first) {
+            r = b;
+            first = false;
+        } else {
+            r.xmin = std::min(r.xmin, b.xmin);
+            r.ymin = std::min(r.ymin, b.ymin);
+            r.xmax = std::max(r.xmax, b.xmax);
+            r.ymax = std::max(r.ymax, b.ymax);
+        }
+    }
+    return r;
+}
+
+// 圆/弧没有椭圆参数化：非等比缩放表达不了 → 选中集合含圆/弧时只允许等比（4 角柄）
+bool PaintController::selectionUniformOnly() const {
+    for (int idx : selected_) {
+        if (idx < 0 || idx >= static_cast<int>(shapes_.size())) {
+            continue;
+        }
+        if (shapes_[idx].mode == Mode::Circle || shapes_[idx].mode == Mode::Arc) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// 恰好单选一条线段：进入端点编辑模式（画两个端点柄，不画外接矩形）
+bool PaintController::selEndpointsMode() const {
+    return selected_.size() == 1 && selected_[0] >= 0 &&
+           selected_[0] < static_cast<int>(shapes_.size()) &&
+           shapes_[selected_[0]].mode == Mode::Line;
+}
+
+PaintController::SelHandle PaintController::pickHandle(IPoint p) const {
+    if (selected_.empty()) {
+        return SelHandle::None;
+    }
+    constexpr float kHandleTol = 6.0f;
+    auto near = [&](IPoint c) { return dist(p, c) <= kHandleTol; };
+    if (selEndpointsMode()) {
+        const Shape& s = shapes_[selected_[0]];
+        if (near(s.a)) {
+            return SelHandle::EndA;
+        }
+        if (near(s.b)) {
+            return SelHandle::EndB;
+        }
+        return SelHandle::None;
+    }
+    const raster::Rect b = selectionBounds();
+    if (b.xmax < b.xmin || b.ymax < b.ymin) {
+        return SelHandle::None;
+    }
+    if (near({b.xmin, b.ymin})) {
+        return SelHandle::NW;
+    }
+    if (near({b.xmax, b.ymin})) {
+        return SelHandle::NE;
+    }
+    if (near({b.xmax, b.ymax})) {
+        return SelHandle::SE;
+    }
+    if (near({b.xmin, b.ymax})) {
+        return SelHandle::SW;
+    }
+    if (!selectionUniformOnly()) { // 等比模式只给角柄
+        const int xm = (b.xmin + b.xmax) / 2;
+        const int ym = (b.ymin + b.ymax) / 2;
+        if (near({xm, b.ymin})) {
+            return SelHandle::N;
+        }
+        if (near({b.xmax, ym})) {
+            return SelHandle::E;
+        }
+        if (near({xm, b.ymax})) {
+            return SelHandle::S;
+        }
+        if (near({b.xmin, ym})) {
+            return SelHandle::W;
+        }
+    }
+    return SelHandle::None;
+}
+
+// 实心方柄（7×7 橙色，拖拽中的柄高亮为白色；黑色描边保证在亮色图形上可见）
+void PaintController::drawHandleBox(FrameBuffer& fb, IPoint c, bool hot) const {
+    const Color fill = hot ? Color::White() : Color(255, 150, 40);
+    for (int y = -3; y <= 3; ++y) {
+        for (int x = -3; x <= 3; ++x) {
+            const bool border = x == -3 || x == 3 || y == -3 || y == 3;
+            fb.putPixel(c.x + x, c.y + y, border ? Color::Black() : fill);
+        }
+    }
+}
+
+void PaintController::drawSelection(FrameBuffer& fb) const {
+    // 1) 高亮重描：把选中图形换成橙色副本在预览层再画一遍——"谁被选中"一眼可辨，
+    //    曲线这类重心不在图形上的形状也不会再含糊
+    for (int idx : selected_) {
+        if (idx < 0 || idx >= static_cast<int>(shapes_.size())) {
+            continue;
+        }
+        Shape hi = shapes_[idx];
+        hi.color = Color(255, 150, 40);
+        drawShape(fb, hi);
+    }
+    // 2) 控制柄与外接矩形
+    if (selEndpointsMode()) {
+        const Shape& s = shapes_[selected_[0]];
+        drawHandleBox(fb, s.a, handleDrag_ && activeHandle_ == SelHandle::EndA);
+        drawHandleBox(fb, s.b, handleDrag_ && activeHandle_ == SelHandle::EndB);
+        return;
+    }
+    const raster::Rect b = selectionBounds();
+    if (b.xmax <= b.xmin || b.ymax <= b.ymin) {
+        return;
+    }
+    drawRectOutline(fb, b, Color(255, 150, 40), {0xF0F0u, 1}); // 橙色虚线外接矩形
+    auto hot = [&](SelHandle h) { return handleDrag_ && activeHandle_ == h; };
+    drawHandleBox(fb, {b.xmin, b.ymin}, hot(SelHandle::NW));
+    drawHandleBox(fb, {b.xmax, b.ymin}, hot(SelHandle::NE));
+    drawHandleBox(fb, {b.xmax, b.ymax}, hot(SelHandle::SE));
+    drawHandleBox(fb, {b.xmin, b.ymax}, hot(SelHandle::SW));
+    if (!selectionUniformOnly()) { // 等比模式只给角柄
+        const int xm = (b.xmin + b.xmax) / 2;
+        const int ym = (b.ymin + b.ymax) / 2;
+        drawHandleBox(fb, {xm, b.ymin}, hot(SelHandle::N));
+        drawHandleBox(fb, {b.xmax, ym}, hot(SelHandle::E));
+        drawHandleBox(fb, {xm, b.ymax}, hot(SelHandle::S));
+        drawHandleBox(fb, {b.xmin, ym}, hot(SelHandle::W));
+    }
+}
+
+// 柄拖拽中每帧调用：端点柄直接改线段参数；bbox 柄以对角（对边）为锚做缩放。
+// 关键：从拖拽开始时的快照重算（而非在当前参数上叠加）——参数是整数，逐帧叠加会累积舍入漂移
+void PaintController::applyHandleDrag(IPoint pos) {
+    if (activeHandle_ == SelHandle::EndA || activeHandle_ == SelHandle::EndB) {
+        if (handleShapeIdx_ >= 0 && handleShapeIdx_ < static_cast<int>(shapes_.size())) {
+            Shape& s = shapes_[handleShapeIdx_];
+            if (activeHandle_ == SelHandle::EndA) {
+                s.a = pos;
+            } else {
+                s.b = pos;
+            }
+            markDirty();
+        }
+        return;
+    }
+    const raster::Rect& b0 = selBounds0_;
+    const int w0 = std::max(1, b0.xmax - b0.xmin);
+    const int h0 = std::max(1, b0.ymax - b0.ymin);
+    const bool east = activeHandle_ == SelHandle::E || activeHandle_ == SelHandle::NE ||
+                      activeHandle_ == SelHandle::SE;
+    const bool west = activeHandle_ == SelHandle::W || activeHandle_ == SelHandle::NW ||
+                      activeHandle_ == SelHandle::SW;
+    const bool north = activeHandle_ == SelHandle::N || activeHandle_ == SelHandle::NW ||
+                       activeHandle_ == SelHandle::NE;
+    const bool south = activeHandle_ == SelHandle::S || activeHandle_ == SelHandle::SW ||
+                       activeHandle_ == SelHandle::SE;
+    // 锚点 = 柄的对角（角柄）/对边（边柄）；中列/中行柄另一轴不缩放
+    const float anchorX =
+        east ? static_cast<float>(b0.xmin)
+             : (west ? static_cast<float>(b0.xmax) : (b0.xmin + b0.xmax) * 0.5f);
+    const float anchorY =
+        south ? static_cast<float>(b0.ymin)
+              : (north ? static_cast<float>(b0.ymax) : (b0.ymin + b0.ymax) * 0.5f);
+    auto clampAxis = [](float s) { return s < 0.02f ? 0.02f : s; }; // 防翻转/防退化
+    float sx = 1.0f;
+    float sy = 1.0f;
+    if (east) {
+        sx = clampAxis((static_cast<float>(pos.x) - anchorX) / w0);
+    } else if (west) {
+        sx = clampAxis((anchorX - static_cast<float>(pos.x)) / w0);
+    }
+    if (south) {
+        sy = clampAxis((static_cast<float>(pos.y) - anchorY) / h0);
+    } else if (north) {
+        sy = clampAxis((anchorY - static_cast<float>(pos.y)) / h0);
+    }
+    float scaleF = 1.0f; // applyToShape 里圆/弧的半径等比因子（仅等比模式用到）
+    if (selectionUniformOnly()) {
+        const float s = std::max(sx, sy); // 跟随拖拽幅度较大的轴，保持长宽比
+        sx = s;
+        sy = s;
+        scaleF = s;
+    }
+    const geom::Mat3 m = geom::scaleAbout(anchorX, anchorY, sx, sy);
+    for (std::size_t k = 0; k < selected_.size() && k < selSnapshot_.size(); ++k) {
+        const int idx = selected_[k];
+        if (idx < 0 || idx >= static_cast<int>(shapes_.size())) {
+            continue;
+        }
+        shapes_[idx] = selSnapshot_[k];
+        applyToShape(shapes_[idx], m, 0.0f, scaleF);
+    }
+    markDirty();
+}
+
 void PaintController::cancelInProgress() {
     dragging_ = false;
     arcAdjust_ = false;
@@ -1230,6 +1515,10 @@ void PaintController::cancelInProgress() {
     curveDrag_ = false;
     dragShapeIdx_ = -1;
     dragCtrlIdx_ = -1;
+    handleDrag_ = false;
+    activeHandle_ = SelHandle::None;
+    handleShapeIdx_ = -1;
+    selSnapshot_.clear();
     selected_.clear();
     pendingPolygon_.clear();
     pendingClipWin_.clear();
@@ -1421,6 +1710,33 @@ void PaintController::onMouseButton(int button, int action, int mods) {
                 markDirty();
                 break;
             }
+            // 画板式编辑：控制柄优先于图形命中（同曲线模式控制点先例）
+            if (!selected_.empty()) {
+                // 先剔除失效下标，保证 selSnapshot_ 与 selected_ 顺序对齐
+                selected_.erase(
+                    std::remove_if(selected_.begin(), selected_.end(),
+                                   [this](int idx) {
+                                       return idx < 0 || idx >= static_cast<int>(shapes_.size());
+                                   }),
+                    selected_.end());
+                const SelHandle h = pickHandle(curr_);
+                if (h != SelHandle::None) {
+                    handleDrag_ = true;
+                    activeHandle_ = h;
+                    handleShapeIdx_ =
+                        (h == SelHandle::EndA || h == SelHandle::EndB) && selEndpointsMode()
+                            ? selected_[0]
+                            : -1;
+                    if (handleShapeIdx_ < 0) { // bbox 柄：记录初始外接矩形 + 选中图形快照
+                        selBounds0_ = selectionBounds();
+                        selSnapshot_.clear();
+                        for (int idx : selected_) {
+                            selSnapshot_.push_back(shapes_[idx]);
+                        }
+                    }
+                    break;
+                }
+            }
             // 选中 / 多选 / 拖拽平移
             const int hit = hitShape(curr_);
             auto inSel = [&](int idx) {
@@ -1451,6 +1767,10 @@ void PaintController::onMouseButton(int button, int action, int mods) {
                 bandStart_ = curr_;
             }
         } else {
+            handleDrag_ = false; // 柄拖拽结束（快照使命完成）
+            activeHandle_ = SelHandle::None;
+            handleShapeIdx_ = -1;
+            selSnapshot_.clear();
             xformDrag_ = false;
             if (bandSelect_) {
                 bandSelect_ = false;
@@ -1504,6 +1824,10 @@ void PaintController::onMouseButton(int button, int action, int mods) {
 }
 
 void PaintController::onMouseMove(IPoint pos) {
+    // 控制柄拖拽：端点编辑 / bbox 缩放（每帧从快照重算，与拖拽平移互斥）
+    if (handleDrag_ && mode_ == Mode::Transform) {
+        applyHandleDrag(pos);
+    }
     // 拖拽平移：以像素为步长的增量平移（整数增量，无舍入累积）
     if (xformDrag_ && mode_ == Mode::Transform && !selected_.empty()) {
         const float dx = static_cast<float>(pos.x - curr_.x);
@@ -1563,7 +1887,7 @@ std::string PaintController::title() const {
         t += std::to_string(selected_.size());
         t += " 参考点:";
         t += refManual_ ? "指定" : "重心";
-        t += " | 左键选(Shift加选) 空白拖拽框选 拖拽/方向键平移 +−缩放 R/T旋转 G参考点 J对接";
+        t += " | 左键选(Shift加选) 空白拖拽框选 拖拽/方向键平移 柄缩放(线段拖端点) Del删除 +−缩放 R/T旋转 G参考点 J对接";
         if (refPick_) {
             t += " | 点击画布指定参考点";
         }

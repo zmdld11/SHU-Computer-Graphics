@@ -394,7 +394,9 @@ int runAlgorithmSelfChecks() {
             ctrl.onKey(GLFW_KEY_RIGHT, GLFW_PRESS);
         }
         ctrl.render(canvas);
-        expect(canvas.pixel(205, 300) == Color::White(), "ui3: 右移 5px 后新位置有像素");
+        // 选中状态下图形被橙色高亮重描（画板式选择），不再露白
+        const Color HI(255, 150, 40);
+        expect(canvas.pixel(205, 300) == HI, "ui3: 右移 5px 后新位置有像素（橙色高亮）");
         expect(canvas.pixel(100, 300) == Color::Black(), "ui3: 原位置已空");
 
         // 点空白清除选中 → 方向键不再生效
@@ -458,7 +460,7 @@ int runAlgorithmSelfChecks() {
             }
         }
         expect(rotated, "ui3: 绕重心旋转后画面变化");
-        expect(after.pixel(400, 165) == Color::Yellow(), "ui3: 旋转后重心附近仍有填充");
+        expect(after.pixel(400, 165) == Color(255, 150, 40), "ui3: 旋转后重心附近仍有填充（高亮橙）");
 
         // G 指定任意参考点 → 缩放绕它（不再是重心）
         ctrl.onKey(GLFW_KEY_G, GLFW_PRESS);
@@ -501,8 +503,9 @@ int runAlgorithmSelfChecks() {
         ctrl.onMouseMove({180, 100}); // 拖拽 +50px
         ctrl.onMouseButton(0, GLFW_RELEASE);
         ctrl.render(canvas);
-        expect(canvas.pixel(200, 100) == Color::White() && canvas.pixel(380, 200) == Color::White(),
-               "ui3: Shift 多选后拖拽平移两条线一起移动");
+        expect(canvas.pixel(200, 100) == Color(255, 150, 40) &&
+                   canvas.pixel(380, 200) == Color(255, 150, 40),
+               "ui3: Shift 多选后拖拽平移两条线一起移动（橙色高亮）");
     }
 
     // ================= 实验三（挑战题）：对接拼接 =================
@@ -572,9 +575,10 @@ int runAlgorithmSelfChecks() {
         ctrl.onMouseMove({750, 60}); // 光标移开，不遮断言点
         ctrl.render(canvas);
         expect(ctrl.title().find("选中:2") != std::string::npos, "band: 框选两条直线");
-        expect(canvas.pixel(150, 100) == Color::Magenta() &&
-                   canvas.pixel(450, 100) == Color::Magenta(),
-               "band: 两个重心标记已绘制");
+        // 画板式选择：两条选中线整体橙色高亮（替代旧的重心十字标记）
+        expect(canvas.pixel(150, 100) == Color(255, 150, 40) &&
+                   canvas.pixel(450, 100) == Color(255, 150, 40),
+               "band: 两条选中线已高亮");
 
         // Shift+框选第三条 → 叠加为 选中:3
         ctrl.onMouseMove({600, 360});
@@ -588,6 +592,88 @@ int runAlgorithmSelfChecks() {
         ctrl.onMouseButton(0, GLFW_PRESS);
         ctrl.onMouseButton(0, GLFW_RELEASE);
         expect(ctrl.title().find("选中:0") != std::string::npos, "band: 空白微点清除选中");
+    }
+
+    // ================= 画板式选择编辑（高亮 / 外接矩形 / 控制柄 / Del） =================
+    {
+        PaintController ctrl;
+        FrameBuffer canvas(kWidth, kHeight);
+        const Color HI(255, 150, 40); // 选中高亮橙（与实现常量一致）
+        auto click = [&](int x, int y) {
+            ctrl.onMouseMove({x, y});
+            ctrl.onMouseButton(0, GLFW_PRESS);
+            ctrl.onMouseButton(0, GLFW_RELEASE);
+        };
+        auto drag = [&](int x0, int y0, int x1, int y1) {
+            ctrl.onMouseMove({x0, y0});
+            ctrl.onMouseButton(0, GLFW_PRESS);
+            ctrl.onMouseMove({x1, y1});
+            ctrl.onMouseButton(0, GLFW_RELEASE);
+        };
+
+        // 单选线段 → 端点编辑模式：高亮 + 两个端点柄，不画外接矩形
+        ctrl.onKey(GLFW_KEY_1, GLFW_PRESS);
+        drag(100, 100, 300, 180); // 线段 (100,100)-(300,180)
+        ctrl.onKey(GLFW_KEY_7, GLFW_PRESS);
+        click(200, 140); // 点线中段选中
+        ctrl.onMouseMove({50, 550});
+        ctrl.render(canvas);
+        // 探针避开线段中点（那里画参考点青十字）
+        expect(canvas.pixel(150, 120) == HI, "sel: 选中线段高亮重描为橙色");
+        expect(canvas.pixel(100, 100) == HI && canvas.pixel(300, 180) == HI,
+               "sel: 线段两端点柄已绘制");
+        expect(canvas.pixel(103, 100) == Color::Black(), "sel: 柄带黑色描边（亮底可见）");
+        expect(canvas.pixel(250, 150) == Color::Black(), "sel: 线段模式不画外接矩形填充");
+
+        // 拖端点柄 b：(300,180) → (340,120)，线段改形
+        drag(300, 180, 340, 120);
+        ctrl.onMouseMove({50, 550});
+        ctrl.render(canvas);
+        // 新线段 (100,100)-(340,120) 上取整数点 (172,106)（中点 (220,110) 有参考点十字）
+        expect(canvas.pixel(172, 106) == HI, "sel: 拖端点后线段改形（新线段高亮）");
+        expect(canvas.pixel(300, 180) == Color::Black(), "sel: 旧端点位置已空");
+
+        // 多选两条水平线 → bbox 8 柄；E 边柄单轴缩放（sx=4，y 不变）
+        ctrl.onKey(GLFW_KEY_E, GLFW_PRESS);
+        ctrl.onKey(GLFW_KEY_1, GLFW_PRESS);
+        drag(100, 400, 150, 400);
+        drag(100, 450, 150, 450);
+        ctrl.onKey(GLFW_KEY_7, GLFW_PRESS);
+        drag(80, 380, 400, 480); // 框选两条
+        ctrl.onMouseMove({50, 550});
+        ctrl.render(canvas);
+        expect(ctrl.title().find("选中:2") != std::string::npos, "sel: 框选两条线");
+        expect(canvas.pixel(150, 425) == HI, "sel: E 边中点柄已绘制");
+        drag(150, 425, 300, 425); // 拖 E 柄 ×4（水平）
+        ctrl.onMouseMove({50, 550});
+        ctrl.render(canvas);
+        expect(canvas.pixel(250, 400) == HI && canvas.pixel(250, 450) == HI,
+               "sel: E 边柄水平缩放两条线");
+        expect(canvas.pixel(110, 430) == Color::Black(), "sel: 单轴缩放纵向不变");
+
+        // 圆：等比模式只给 4 角柄；拖 SE 角柄等比放大 1.5 倍
+        ctrl.onKey(GLFW_KEY_E, GLFW_PRESS);
+        ctrl.onKey(GLFW_KEY_2, GLFW_PRESS);
+        drag(500, 300, 560, 300); // 圆心(500,300) r=60
+        ctrl.onKey(GLFW_KEY_7, GLFW_PRESS);
+        click(560, 300); // 点圆环右轴选中
+        ctrl.onMouseMove({50, 550});
+        ctrl.render(canvas);
+        expect(canvas.pixel(440, 240) == HI && canvas.pixel(560, 360) == HI,
+               "sel: 圆的角柄已绘制");
+        expect(canvas.pixel(556, 300) == Color::Black(), "sel: 等比模式无边中点柄");
+        drag(560, 360, 620, 420); // SE 角柄 → 等比 1.5：圆心(530,330) r=90
+        ctrl.onMouseMove({50, 550});
+        ctrl.render(canvas);
+        expect(canvas.pixel(620, 330) == HI, "sel: 角柄等比缩放后新右轴点");
+        expect(canvas.pixel(560, 300) == Color::Black(), "sel: 旧右轴点已空");
+
+        // Del 删除选中图形
+        ctrl.onKey(GLFW_KEY_DELETE, GLFW_PRESS);
+        ctrl.onMouseMove({50, 550});
+        ctrl.render(canvas);
+        expect(canvas.pixel(620, 330) == Color::Black(), "sel: Del 删除选中图形");
+        expect(ctrl.title().find("选中:0") != std::string::npos, "sel: 删除后清空选中");
     }
 
     // ================= extension：常驻裁剪（窗口独立于模式，持续生效可开关） =================
@@ -795,7 +881,8 @@ int runAlgorithmSelfChecks() {
             ctrl.onKey(GLFW_KEY_RIGHT, GLFW_PRESS); // 右移 10px
         }
         ctrl.render(canvas);
-        expect(canvas.pixel(410, 400) == Color::White(), "ui4: 曲线可被选中并随方向键平移");
+        expect(canvas.pixel(410, 400) == Color(255, 150, 40),
+               "ui4: 曲线可被选中并随方向键平移（橙色高亮）");
 
         // 框选曲线：空白拖拽矩形罩住样条 → 选中:1
         ctrl.onMouseMove({60, 60});
