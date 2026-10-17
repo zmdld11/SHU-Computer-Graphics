@@ -2,7 +2,16 @@
 // 实现 CPU 像素画板：一块按行存储的内存像素数组，putPixel 是全项目唯一的画点入口，所有实验算法都画在它上面。
 #include "core/FrameBuffer.hpp"
 
+#include <cassert>
+
 namespace cg {
+
+// 尺寸与像素缓冲必须严格同步：一旦失配（如堆被破坏），下标守卫形同虚设
+static void assertSizeInvariant([[maybe_unused]] int width,
+                                [[maybe_unused]] int height,
+                                [[maybe_unused]] std::size_t pixels) {
+    assert(pixels == static_cast<std::size_t>(width) * static_cast<std::size_t>(height) * 4);
+}
 
     FrameBuffer::FrameBuffer(int width, int height)
         : width_(width), height_(height),
@@ -36,6 +45,7 @@ namespace cg {
 
     // 画笔函数
     void FrameBuffer::putPixel(int x, int y, const Color& color) {
+        assertSizeInvariant(width_, height_, pixels_.size());
         if (x < 0 || x >= width_ || y < 0 || y >= height_) {
             return;
         }
@@ -50,6 +60,7 @@ namespace cg {
 
     // 获取像素颜色
     Color FrameBuffer::pixel(int x, int y) const {
+        assertSizeInvariant(width_, height_, pixels_.size());
         if (x < 0 || x >= width_ || y < 0 || y >= height_) {
             return Color::Black();
         }

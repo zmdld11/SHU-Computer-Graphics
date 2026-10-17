@@ -79,6 +79,74 @@ int main(int argc, char** argv) {
         return 0;
     }
 
+    // --stress-ui：不开窗口的交互压力脚本——出界画图/超界拖拽/极小窗口等极限操作，
+    // 最后渲染一帧验证"不崩溃"（越界防护回归场景）
+    if (arg == "--stress-ui") {
+        cg::FrameBuffer fb(kWidth, kHeight);
+        cg::PaintController ctrl;
+        auto key = [&](int k) { ctrl.onKey(k, GLFW_PRESS); };
+        auto click = [&](int x, int y) {
+            ctrl.onMouseMove({x, y});
+            ctrl.onMouseButton(0, GLFW_PRESS);
+            ctrl.onMouseButton(0, GLFW_RELEASE);
+        };
+        auto drag = [&](int x0, int y0, int x1, int y1) {
+            ctrl.onMouseMove({x0, y0});
+            ctrl.onMouseButton(0, GLFW_PRESS);
+            ctrl.onMouseMove({x1, y1});
+            ctrl.onMouseButton(0, GLFW_RELEASE);
+        };
+
+        key(GLFW_KEY_1);
+        drag(-300, -200, 1200, 900); // 直线：两端远在画布外
+        key(GLFW_KEY_1);
+        drag(-100, 500, 900, 100); // 直线：起点画布外，横穿画布
+        key(GLFW_KEY_2);
+        drag(650, 120, -500, -400); // 圆：超大半径，绝大部分在画布外
+        key(GLFW_KEY_3); // 弧：两阶段提交（圆心/半径/起始角 → 调终止角）
+        drag(150, 300, 260, 300);
+        ctrl.onMouseMove({400, 450});
+        ctrl.onMouseButton(0, GLFW_PRESS);
+        ctrl.onMouseButton(0, GLFW_RELEASE);
+        key(GLFW_KEY_4); // 多边形：顶点越界
+        click(80, 420);
+        click(420, 380);
+        click(950, 750);
+        click(-150, 700);
+        ctrl.onMouseButton(1, GLFW_PRESS); // 右键闭合
+        key(GLFW_KEY_2);
+        drag(600, 80, 660, 80); // 小圆（半径 60）
+        key(GLFW_KEY_5);
+        click(600, 80); // 圆内种子填充
+        key(GLFW_KEY_8); // 曲线：控制点越界
+        click(-100, -50);
+        click(300, 100);
+        click(500, 500);
+        click(900, 700);
+        ctrl.onMouseButton(1, GLFW_PRESS); // 右键提交
+        key(GLFW_KEY_7); // 变换：选中 → 拖出画布深处 → 从画布外拖回
+        click(660, 80);
+        drag(660, 80, -1600, -1700);
+        drag(-1600, -1700, 660, 80);
+        drag(-2000, -2000, 2000, 2000); // 超大框选
+        for (int i = 0; i < 8; ++i) {
+            key(GLFW_KEY_RIGHT); // 方向键微移出界
+        }
+        key(GLFW_KEY_S);
+        key(GLFW_KEY_W);
+        key(GLFW_KEY_X);
+        key(GLFW_KEY_6); // 极小常驻裁剪窗口（8×8，UI 允许的最小值）
+        key(GLFW_KEY_K);
+        drag(100, 100, 108, 108);
+        drag(0, 100, 200, 100);
+        ctrl.render(fb);
+        if (!cg::tests::writePPM("stress-ui.ppm", fb)) {
+            return 1;
+        }
+        std::cout << "stress ui ok: stress-ui.ppm" << std::endl;
+        return 0;
+    }
+
     const bool smoke = (arg == "--smoke"); // --smoke：隐藏窗口跑算法自测即可退出
 
     cg::Window window(kWidth, kHeight, "SHU-Computer-Graphics 绘图引擎", smoke);

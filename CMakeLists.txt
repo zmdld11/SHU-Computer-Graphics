@@ -49,7 +49,14 @@ if(WIN32)
 endif()
 
 if(MSVC)
-    target_compile_options(cg-engine PRIVATE /W4)
+    # /utf-8：源码是 UTF-8（中文注释/字符串），否则按代码页 936 解析会报 C2001/C4819
+    # /EHsc：std::vector 等标准库需要异常展开语义（否则 C4530）
+    target_compile_options(cg-engine PRIVATE /W4 /utf-8 /EHsc)
 else()
     target_compile_options(cg-engine PRIVATE -Wall -Wextra -Wpedantic)
 endif()
+
+# Debug 构建显式开启 libstdc++ 容器越界断言：任何越界下标立即 abort，
+# 不依赖工具链默认行为（CLion 捆绑 MinGW 默认开，其他 MinGW 环境未必）
+target_compile_options(cg-engine PRIVATE
+    $<$<AND:$<CONFIG:Debug>,$<CXX_COMPILER_ID:GNU,Clang>>:-D_GLIBCXX_ASSERTIONS>)

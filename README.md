@@ -26,9 +26,10 @@ cmake --build build
 
 ```bash
 ./build/cg-engine            # 交互绘图（Windows 下为 build/cg-engine.exe）
-./build/cg-engine --smoke    # 无窗口算法自测（108 项断言，退出码 0 = 通过）
+./build/cg-engine --smoke    # 无窗口算法自测（124 项断言，退出码 0 = 通过）
 ./build/cg-engine --demo     # 无窗口导出演示图 demo.ppm（自查/报告插图）
 ./build/cg-engine --demo-ui  # 无窗口导出 UI 演示图（任务栏+图形+常驻裁剪+选中）
+./build/cg-engine --stress-ui # 无窗口交互压力测试（越界画图/拖拽出画布/极小裁剪窗，崩溃回归）
 ```
 
 > Windows 工具链：MSVC (VS2022) 或 MinGW 皆可。
