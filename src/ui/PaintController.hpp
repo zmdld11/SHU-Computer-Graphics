@@ -30,8 +30,8 @@ public:
     // 每帧调用：必要时重绘提交层，然后拷贝 + 叠加预览
     void render(FrameBuffer& fb);
 
-    // 窗口标题（当前模式/属性/快捷键提示）
-    std::string title() const;
+    // 窗口标题（当前模式/属性/快捷键提示）。返回缓存引用，主循环可每帧比较而不重建字符串。
+    const std::string& title() const;
 
     // ---- 自绘任务栏（无界面框架，全部经 putPixel 绘制；键盘与按钮共用 handleAction） ----
     // 操作与按钮描述放在 public：测试按标签定位按钮中心再模拟点击，布局变化不破坏用例
@@ -97,6 +97,8 @@ private:
     IPoint lineDragEnd() const; // 直线拖拽终点（Shift：方向吸附 45° 整数倍）
     int dragRadius() const;     // 圆/弧拖拽半径（Ctrl：kStepPx 步进）
     void drawShape(FrameBuffer& fb, const Shape& s) const;
+    void drawOutline(FrameBuffer& fb, const Shape& s, const Color& c,
+                     const raster::LineStyle& ls) const; // 线/圆/弧/多边形/曲线的轮廓重描
     void drawClipWindow(FrameBuffer& fb, const Color& c, bool dashed) const;
     void drawPreview(FrameBuffer& fb) const;
     void commitRender(); // 图形列表 → committed_
@@ -112,6 +114,7 @@ private:
     FPoint activeRefPoint() const;                 // 手动参考点（未指定时回退重心）
     void transformSelected(const geom::Mat3& m, float rotDeg, float scaleF);
     void beginXformDrag(IPoint anchor); // 开始整体拖拽：记录锚点并快照选中集合
+    void snapshotSelection();           // 选中图形参数快照（拖拽期间从快照重算，防整型漂移）
     static void applyToShape(Shape& s, const geom::Mat3& m, float rotDeg, float scaleF);
     // ---- 种子填充绑定（圆/多边形缩放时种子随图形走） ----
     void addShape(Shape s);                              // 入列表并分配稳定 id
@@ -141,6 +144,7 @@ private:
 
     // ---- 状态变更 ----
     void markDirty() { dirty_ = true; }
+    void switchMode(Mode m); // 切换模式并结束所有进行中的输入
     void closePolygon();
     void cancelInProgress();
     void setRectClipWindow(IPoint p1, IPoint p2);
@@ -154,6 +158,8 @@ private:
     // ---- 任务栏 ----
     void handleAction(Act a);                        // 键盘与按钮的统一操作入口
     void buildToolbar(std::vector<ToolButton>& btns) const;
+    std::uint64_t toolbarKey(int width) const;       // 影响任务栏布局/文字的状态指纹
+    void renderToolbar(FrameBuffer& fb, const std::vector<ToolButton>& btns) const;
     void drawToolbar(FrameBuffer& fb) const;
     bool toolbarPress(IPoint p);                     // 命中按钮则执行并返回 true
 
@@ -223,6 +229,14 @@ private:
     // 其余帧直接整块 memcpy 到显示缓冲，避免每帧逐像素掩码。
     std::unique_ptr<FrameBuffer> clipCache_;
     bool clipCacheDirty_ = true;
+
+    // 任务栏缓存：布局和文字只在状态变化时重建，其余帧逐行整段上屏。
+    mutable std::unique_ptr<FrameBuffer> toolbarCache_;
+    mutable std::vector<ToolButton> toolbarLayout_;
+    mutable std::uint64_t toolbarCacheKey_ = ~0ull;
+    // 标题缓存：只在键盘/鼠标按键事件后重建，主循环每帧读取不再拼接长字符串。
+    mutable std::string titleCache_;
+    mutable bool titleDirty_ = true;
 };
 
 } // namespace cg

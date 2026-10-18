@@ -48,9 +48,10 @@ struct CirclePixel {
     IPoint p;
 };
 
-// 整圆离散点集：中点算法走 1/8 弧 + 八分对称展开，再按角度升序排序去重。
-// 排序后掩码计数沿圆周连续递增，虚线/点线在圆周上均匀（#13）。
-std::vector<CirclePixel> circlePoints(IPoint center, int radius) {
+// 整圆离散点集：中点算法走 1/8 弧 + 八分对称展开。
+// ordered=true 时按角度升序排序去重——掩码计数沿圆周连续递增，虚线/点线才均匀（#13）；
+// 实线（默认）不需要角度和排序，跳过 atan2/sort 的整圆开销。
+std::vector<CirclePixel> circlePoints(IPoint center, int radius, bool ordered) {
     std::vector<CirclePixel> pts;
     pts.reserve(static_cast<std::size_t>(radius) * 8);
 
@@ -63,7 +64,7 @@ std::vector<CirclePixel> circlePoints(IPoint center, int radius) {
         };
         for (const auto& off : offs) {
             const IPoint p{center.x + off[0], center.y + off[1]};
-            pts.push_back({angleOf(p.x, p.y, center.x, center.y), p});
+            pts.push_back({ordered ? angleOf(p.x, p.y, center.x, center.y) : 0.0f, p});
         }
         if (d < 0) {
             d += 2 * x + 3;       // 取正右像素
@@ -74,6 +75,9 @@ std::vector<CirclePixel> circlePoints(IPoint center, int radius) {
         ++x;
     }
 
+    if (!ordered) {
+        return pts;
+    }
     std::sort(pts.begin(), pts.end(),
               [](const CirclePixel& a, const CirclePixel& b) { return a.angle < b.angle; });
     // 45° 等对称轴上同一像素会从两个八分段各来一次，排序后相邻，去重
@@ -141,7 +145,8 @@ void drawCircle(FrameBuffer& fb, IPoint center, int radius, const Color& color,
         return;
     }
     unsigned step = 0;
-    for (const auto& cp : circlePoints(center, radius)) {
+    const bool needOrder = style.mask != 0xFFFFu; // 只有虚线/点线需要沿圆周的连续掩码
+    for (const auto& cp : circlePoints(center, radius, needOrder)) {
         plotPen(fb, cp.p.x, cp.p.y, color, style, step++);
     }
 }
@@ -160,7 +165,7 @@ void drawArc(FrameBuffer& fb, IPoint center, int radius, float startDeg, float e
     if (e <= s) e += 360.0f;
 
     unsigned step = 0; // 只对画出的像素递增，虚线沿弧线连续
-    for (const auto& cp : circlePoints(center, radius)) {
+    for (const auto& cp : circlePoints(center, radius, true)) {
         if (inArcRange(cp.angle, s, e)) {
             plotPen(fb, cp.p.x, cp.p.y, color, style, step++);
         }

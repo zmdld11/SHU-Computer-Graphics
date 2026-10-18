@@ -1275,6 +1275,13 @@ int runAlgorithmSelfChecks() {
         bufC.copyFrom(bufA);
         expect(bufC.width() == 16 && bufC.height() == 8 && bufC.pixel(15, 7) == Color::Blue(),
                "fb: copyFrom 尺寸不同自动重建");
+
+        FrameBuffer bufD(8, 4);
+        bufD.clear(Color::Black());
+        bufD.fillSpan(2, -2, 5, Color::Red());
+        expect(bufD.pixel(0, 2) == Color::Red() && bufD.pixel(5, 2) == Color::Red() &&
+                   bufD.pixel(6, 2) == Color::Black(),
+               "fb: fillSpan 行内整段填充与边界");
     }
 
     // ================= 常驻裁剪显示层缓存（#55） =================
