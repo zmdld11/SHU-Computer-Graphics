@@ -1008,6 +1008,19 @@ void PaintController::transformSelected(const geom::Mat3& m, float rotDeg, float
     markDirty();
 }
 
+// 开始整体拖拽：记录按下点（绝对式偏移的锚）并快照当前选中集合。
+// 控制柄拖拽和外接矩形拖拽都从这里进入，保证 selSnapshot_ 与 selected_ 同序。
+void PaintController::beginXformDrag(IPoint anchor) {
+    xformDrag_ = true;
+    lastDrag_ = anchor;
+    selSnapshot_.clear();
+    for (int idx : selected_) {
+        if (idx >= 0 && idx < static_cast<int>(shapes_.size())) {
+            selSnapshot_.push_back(shapes_[idx]);
+        }
+    }
+}
+
 // 矩阵作用到图形参数；rotDeg/scaleF 是矩阵对应的旋转角/等比因子，
 // 圆/弧的参数化字段（半径、角度）按它们修正（设计决策见 issue #35）
 void PaintController::applyToShape(Shape& s, const geom::Mat3& m, float rotDeg, float scaleF) {
@@ -1055,7 +1068,9 @@ int PaintController::hitShape(IPoint p) const {
             }
             break;
         case Mode::Circle:
-            if (std::fabs(dist(p, s.a) - s.radius) <= kHitTol) {
+            // 圆环 5px 容差，或圆内任意位置：填充圆不必非得抓那一圈细线
+            if (std::fabs(dist(p, s.a) - s.radius) <= kHitTol ||
+                dist(p, s.a) <= static_cast<float>(s.radius)) {
                 return i;
             }
             break;
@@ -1065,11 +1080,19 @@ int PaintController::hitShape(IPoint p) const {
                 return i;
             }
             break;
-        case Mode::Polygon:
+        case Mode::Polygon: {
             if (pointInPolygon(p, s.polygon)) {
                 return i;
             }
+            // 轮廓 5px 容差：未填充多边形屏幕上只有边，点在边附近也应该能抓住
+            const int n = static_cast<int>(s.polygon.size());
+            for (int k = 0; k < n; ++k) {
+                if (distToSegment(p, s.polygon[k], s.polygon[(k + 1) % n]) <= kHitTol) {
+                    return i;
+                }
+            }
             break;
+        }
         case Mode::Curve: {
             // 命中 = 点击点到采样折线的最短距离在容差内
             const std::vector<FPoint> samples = curveSamples(s);
@@ -1448,15 +1471,42 @@ void PaintController::drawHandleBox(FrameBuffer& fb, IPoint c, bool hot) const {
 }
 
 void PaintController::drawSelection(FrameBuffer& fb) const {
-    // 1) 高亮重描：把选中图形换成橙色副本在预览层再画一遍——"谁被选中"一眼可辨，
-    //    曲线这类重心不在图形上的形状也不会再含糊
+    // 1) 高亮重描：只重画橙色加粗轮廓，不重填填充区域——
+    //    选中仍然一眼可辨，同时保留原填充色，也避免预览层每帧再做一次整块扫描填充
+    const Color hi(255, 150, 40);
+    const raster::LineStyle hiStyle{0xFFFFu, 3}; // 实线加粗，虚线图形也能看清选中态
     for (int idx : selected_) {
         if (idx < 0 || idx >= static_cast<int>(shapes_.size())) {
             continue;
         }
-        Shape hi = shapes_[idx];
-        hi.color = Color(255, 150, 40);
-        drawShape(fb, hi);
+        const Shape& s = shapes_[idx];
+        switch (s.mode) {
+        case Mode::Line:
+            raster::drawLine(fb, s.a, s.b, hi, hiStyle);
+            break;
+        case Mode::Circle:
+            raster::drawCircle(fb, s.a, s.radius, hi, hiStyle);
+            break;
+        case Mode::Arc:
+            raster::drawArc(fb, s.a, s.radius, s.startDeg, s.endDeg, hi, hiStyle);
+            break;
+        case Mode::Polygon: {
+            const std::size_t n = s.polygon.size();
+            for (std::size_t k = 0; n >= 2 && k < n; ++k) {
+                raster::drawLine(fb, s.polygon[k], s.polygon[(k + 1) % n], hi, hiStyle);
+            }
+            break;
+        }
+        case Mode::Curve: {
+            const std::vector<FPoint> samples = curveSamples(s);
+            for (std::size_t k = 0; k + 1 < samples.size(); ++k) {
+                raster::drawLine(fb, roundPt(samples[k]), roundPt(samples[k + 1]), hi, hiStyle);
+            }
+            break;
+        }
+        default:
+            break;
+        }
     }
     // 2) 控制柄与外接矩形
     if (selEndpointsMode()) {
@@ -1818,14 +1868,19 @@ void PaintController::onMouseButton(int button, int action, int mods) {
                     markDirty();
                 }
                 if (sel) { // 在选中集合里才可拖拽平移
-                    xformDrag_ = true;
-                    lastDrag_ = curr_; // 拖拽起点（绝对式平移的锚）
-                    selSnapshot_.clear();
-                    for (int idx : selected_) {
-                        if (idx >= 0 && idx < static_cast<int>(shapes_.size())) {
-                            selSnapshot_.push_back(shapes_[idx]);
-                        }
-                    }
+                    beginXformDrag(curr_);
+                }
+            } else if (!selected_.empty()) {
+                // 多选组合体：外接矩形内部空白处按下也进入整体拖拽（PPT 组合体行为），
+                // 不再把这次按下当成"重新框选"而清掉选择
+                const raster::Rect b = selectionBounds();
+                const bool inBounds = curr_.x >= b.xmin && curr_.x <= b.xmax &&
+                                      curr_.y >= b.ymin && curr_.y <= b.ymax;
+                if (inBounds) {
+                    beginXformDrag(curr_);
+                } else { // 点包围盒外：进入框选拖拽，松开时结算（原地微点=清除选中）
+                    bandSelect_ = true;
+                    bandStart_ = curr_;
                 }
             } else { // 点空白：进入框选拖拽，松开时结算（原地微点=清除选中）
                 bandSelect_ = true;

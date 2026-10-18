@@ -460,7 +460,9 @@ int runAlgorithmSelfChecks() {
             }
         }
         expect(rotated, "ui3: 绕重心旋转后画面变化");
-        expect(after.pixel(400, 165) == Color(255, 150, 40), "ui3: 旋转后重心附近仍有填充（高亮橙）");
+        expect(after.pixel(400, 165) != Color::Black() &&
+                   after.pixel(400, 165) != Color(255, 150, 40),
+               "ui3: 旋转后重心附近保留原填充色");
 
         // G 指定任意参考点 → 缩放绕它（不再是重心）
         ctrl.onKey(GLFW_KEY_G, GLFW_PRESS);
@@ -674,6 +676,90 @@ int runAlgorithmSelfChecks() {
         ctrl.render(canvas);
         expect(canvas.pixel(620, 330) == Color::Black(), "sel: Del 删除选中图形");
         expect(ctrl.title().find("选中:0") != std::string::npos, "sel: 删除后清空选中");
+    }
+
+    // ================= 变换拖拽覆盖：多边形边缘 / 圆内部 / 多选组合体（#56） =================
+    {
+        PaintController ctrl;
+        FrameBuffer canvas(kWidth, kHeight);
+        const Color HI(255, 150, 40);
+        auto key = [&](int k) { ctrl.onKey(k, GLFW_PRESS); };
+        auto click = [&](int x, int y) {
+            ctrl.onMouseMove({x, y});
+            ctrl.onMouseButton(0, GLFW_PRESS);
+            ctrl.onMouseButton(0, GLFW_RELEASE);
+        };
+        auto drag = [&](int x0, int y0, int x1, int y1) {
+            ctrl.onMouseMove({x0, y0});
+            ctrl.onMouseButton(0, GLFW_PRESS);
+            ctrl.onMouseMove({x1, y1});
+            ctrl.onMouseButton(0, GLFW_RELEASE);
+        };
+
+        // 多边形：点上边（轮廓，不是内部）也能选中并拖动
+        key(GLFW_KEY_4);
+        click(100, 100);
+        click(300, 100);
+        click(300, 250);
+        click(100, 250);
+        ctrl.onMouseButton(1, GLFW_PRESS); // 右键闭合
+        key(GLFW_KEY_7);
+        click(200, 100);
+        expect(ctrl.title().find("选中:1") != std::string::npos, "drag: 多边形边缘命中选中");
+        drag(200, 100, 250, 150); // 整体 +50,+50
+        ctrl.onMouseMove({50, 550});
+        ctrl.render(canvas);
+        expect(canvas.pixel(250, 190) == Color::Yellow(), "drag: 多边形边缘拖拽整体移动");
+        expect(canvas.pixel(200, 150) == HI, "drag: 选中多边形为橙色加粗轮廓");
+        expect(canvas.pixel(200, 100) == Color::Black(), "drag: 多边形旧边位置已空");
+
+        // 圆：点圆心（不是圆环）也能选中并拖动
+        key(GLFW_KEY_2);
+        drag(400, 300, 450, 300); // 圆心 (400,300) r=50
+        key(GLFW_KEY_7);
+        click(400, 300);
+        expect(ctrl.title().find("选中:1") != std::string::npos, "drag: 圆内部命中选中");
+        drag(400, 300, 500, 300);
+        ctrl.onMouseMove({50, 550});
+        ctrl.render(canvas);
+        expect(canvas.pixel(550, 300) == HI, "drag: 圆内部拖拽后新右轴点");
+        expect(canvas.pixel(400, 300) == Color::Black(), "drag: 圆旧圆心位置已空");
+    }
+    {
+        // 多选组合体：外接矩形内空白处按下 = 整体拖拽；点矩形外才重新框选
+        PaintController ctrl;
+        FrameBuffer canvas(kWidth, kHeight);
+        const Color HI(255, 150, 40);
+        auto key = [&](int k) { ctrl.onKey(k, GLFW_PRESS); };
+        auto click = [&](int x, int y) {
+            ctrl.onMouseMove({x, y});
+            ctrl.onMouseButton(0, GLFW_PRESS);
+            ctrl.onMouseButton(0, GLFW_RELEASE);
+        };
+        auto drag = [&](int x0, int y0, int x1, int y1) {
+            ctrl.onMouseMove({x0, y0});
+            ctrl.onMouseButton(0, GLFW_PRESS);
+            ctrl.onMouseMove({x1, y1});
+            ctrl.onMouseButton(0, GLFW_RELEASE);
+        };
+
+        key(GLFW_KEY_1);
+        drag(100, 100, 200, 100);
+        key(GLFW_KEY_1);
+        drag(100, 300, 200, 300);
+        key(GLFW_KEY_7);
+        drag(50, 70, 260, 360); // 框选两条线，组合体 bbox=(100,100)-(200,300)
+        expect(ctrl.title().find("选中:2") != std::string::npos, "drag: 框选形成组合体");
+        drag(150, 200, 200, 250); // 从 bbox 内部空白处整体拖 +50,+50
+        ctrl.onMouseMove({600, 550});
+        ctrl.render(canvas);
+        expect(canvas.pixel(180, 150) == HI && canvas.pixel(180, 350) == HI,
+               "drag: 组合体空白处整体拖拽两条线");
+        expect(canvas.pixel(180, 100) == Color::Black() &&
+                   canvas.pixel(180, 300) == Color::Black(),
+               "drag: 组合体旧位置已空");
+        click(600, 500); // bbox 外微点 → 清除选中
+        expect(ctrl.title().find("选中:0") != std::string::npos, "drag: 点组合体外清除选中");
     }
 
     // ================= 修饰键约束（Shift 45° 吸附 / Ctrl 定步长） =================

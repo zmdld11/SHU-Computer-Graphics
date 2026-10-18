@@ -108,6 +108,7 @@ private:
     FPoint combinedCentroid() const;               // 选中集合的整体参考点
     FPoint activeRefPoint() const;                 // 手动参考点（未指定时回退重心）
     void transformSelected(const geom::Mat3& m, float rotDeg, float scaleF);
+    void beginXformDrag(IPoint anchor); // 开始整体拖拽：记录锚点并快照选中集合
     static void applyToShape(Shape& s, const geom::Mat3& m, float rotDeg, float scaleF);
     int hitShape(IPoint p) const;                  // 返回命中的图形下标，无命中 -1
     bool shapeIntersectsRect(const Shape& s, const raster::Rect& r) const; // 框选：图形与矩形相交
