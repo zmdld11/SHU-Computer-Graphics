@@ -950,8 +950,9 @@ int runAlgorithmSelfChecks() {
         expect(mirrored, "bezier: 控制点倒序则曲线倒序（对称性）");
 
         bool inHull = true;
-        for (const auto& p : samples) {
-            if (p.x < -1e-3f || p.x > 100.0f + 1e-3f || p.y < -1e-3f || p.y > 100.0f + 1e-3f) {
+        for (const auto& pt : samples) {
+            if (pt.x < -1e-3f || pt.x > 100.0f + 1e-3f || pt.y < -1e-3f ||
+                pt.y > 100.0f + 1e-3f) {
                 inHull = false;
             }
         }
@@ -988,8 +989,9 @@ int runAlgorithmSelfChecks() {
             {{0.0f, 0.0f}, {200.0f, 0.0f}, {200.0f, 200.0f}, {0.0f, 200.0f}, {100.0f, 100.0f}},
             3, 64);
         bool hull5 = true;
-        for (const auto& p : bs5) {
-            if (p.x < -1e-3f || p.x > 200.0f + 1e-3f || p.y < -1e-3f || p.y > 200.0f + 1e-3f) {
+        for (const auto& pt : bs5) {
+            if (pt.x < -1e-3f || pt.x > 200.0f + 1e-3f || pt.y < -1e-3f ||
+                pt.y > 200.0f + 1e-3f) {
                 hull5 = false;
             }
         }
@@ -1087,12 +1089,12 @@ int runAlgorithmSelfChecks() {
 
         // "7 变换" 按钮内应存在浅色文字像素（系统字体/回退点阵都在按钮框内绘制）
         bool hasText = false;
-        for (const auto& b : ctrl.toolbarButtons()) {
-            if (b.label != "7 变换") {
+        for (const auto& btn : ctrl.toolbarButtons()) {
+            if (btn.label != "7 变换") {
                 continue;
             }
-            for (int y = b.y; y < b.y + b.h && !hasText; ++y) {
-                for (int x = b.x; x < b.x + b.w; ++x) {
+            for (int y = btn.y; y < btn.y + btn.h && !hasText; ++y) {
+                for (int x = btn.x; x < btn.x + btn.w; ++x) {
                     if (canvas.pixel(x, y) == Color(230, 230, 235)) {
                         hasText = true;
                         break;
@@ -1253,25 +1255,25 @@ int runAlgorithmSelfChecks() {
 
     // ================= 显示层整块操作（#55：FrameBuffer 提速） =================
     {
-        FrameBuffer a(16, 8);
-        a.clear(Color::Black());
-        a.fillRect(2, 3, 5, 6, Color::Red());
-        expect(a.pixel(2, 3) == Color::Red() && a.pixel(5, 6) == Color::Red() &&
-                   a.pixel(1, 3) == Color::Black() && a.pixel(6, 3) == Color::Black(),
+        FrameBuffer bufA(16, 8);
+        bufA.clear(Color::Black());
+        bufA.fillRect(2, 3, 5, 6, Color::Red());
+        expect(bufA.pixel(2, 3) == Color::Red() && bufA.pixel(5, 6) == Color::Red() &&
+                   bufA.pixel(1, 3) == Color::Black() && bufA.pixel(6, 3) == Color::Black(),
                "fb: fillRect 闭区间与边界");
-        a.fillRect(-5, -5, 100, 100, Color::Blue());
-        expect(a.pixel(0, 0) == Color::Blue() && a.pixel(15, 7) == Color::Blue(),
+        bufA.fillRect(-5, -5, 100, 100, Color::Blue());
+        expect(bufA.pixel(0, 0) == Color::Blue() && bufA.pixel(15, 7) == Color::Blue(),
                "fb: fillRect 越界自动夹取");
 
-        FrameBuffer b(16, 8);
-        b.copySpanFrom(a, 4, 3, 6);
-        expect(b.pixel(3, 4) == Color::Blue() && b.pixel(2, 4) == Color::Black() &&
-                   b.pixel(7, 4) == Color::Black(),
+        FrameBuffer bufB(16, 8);
+        bufB.copySpanFrom(bufA, 4, 3, 6);
+        expect(bufB.pixel(3, 4) == Color::Blue() && bufB.pixel(2, 4) == Color::Black() &&
+                   bufB.pixel(7, 4) == Color::Black(),
                "fb: copySpanFrom 整段拷贝");
 
-        FrameBuffer c(4, 4);
-        c.copyFrom(a);
-        expect(c.width() == 16 && c.height() == 8 && c.pixel(15, 7) == Color::Blue(),
+        FrameBuffer bufC(4, 4);
+        bufC.copyFrom(bufA);
+        expect(bufC.width() == 16 && bufC.height() == 8 && bufC.pixel(15, 7) == Color::Blue(),
                "fb: copyFrom 尺寸不同自动重建");
     }
 
@@ -1339,6 +1341,95 @@ int runAlgorithmSelfChecks() {
         ctrl.render(canvas);
         expect(canvas.pixel(400, 300) == Color::White(), "clip-cache: 凸多边形窗内可见");
         expect(canvas.pixel(200, 300) == Color::Black(), "clip-cache: 凸多边形窗外隐藏");
+    }
+
+    // ================= 种子填充绑定：圆/多边形缩放不内外翻转（#57） =================
+    {
+        PaintController ctrl;
+        FrameBuffer canvas(kWidth, kHeight);
+        auto key = [&](int k) { ctrl.onKey(k, GLFW_PRESS); };
+        auto click = [&](int x, int y) {
+            ctrl.onMouseMove({x, y});
+            ctrl.onMouseButton(0, GLFW_PRESS);
+            ctrl.onMouseButton(0, GLFW_RELEASE);
+        };
+        auto drag = [&](int x0, int y0, int x1, int y1) {
+            ctrl.onMouseMove({x0, y0});
+            ctrl.onMouseButton(0, GLFW_PRESS);
+            ctrl.onMouseMove({x1, y1});
+            ctrl.onMouseButton(0, GLFW_RELEASE);
+        };
+
+        // 画圆 r=100，在圆内 (450,300) 做种子填充（绑定到圆）
+        key(GLFW_KEY_2);
+        drag(400, 300, 500, 300);
+        key(GLFW_KEY_5);
+        click(450, 300);
+        ctrl.render(canvas);
+        expect(canvas.pixel(400, 260) == Color::Yellow(), "seed-bind: 圆内种子填充生效");
+        expect(canvas.pixel(100, 100) == Color::Black(), "seed-bind: 填充未溢出圆外");
+
+        // 变换选中圆，拖 SE 角柄缩到 0.5：种子应随圆缩到新圆心附近，不填背景
+        key(GLFW_KEY_7);
+        click(500, 300); // 圆环右轴点选中
+        drag(500, 400, 350, 300); // SE 角柄 → 中心 (350,250)、r=50
+        ctrl.onMouseMove({700, 550});
+        ctrl.render(canvas);
+        expect(canvas.pixel(340, 250) == Color::Yellow(),
+               "seed-bind: 缩小后圆内仍保留填充色");
+        expect(canvas.pixel(450, 300) == Color::Black(),
+               "seed-bind: 缩小后圆外未翻转为填充色");
+
+        // 整体平移圆：种子跟随，不留旧位置
+        drag(350, 250, 430, 250);
+        ctrl.onMouseMove({700, 550});
+        ctrl.render(canvas);
+        expect(canvas.pixel(430, 240) == Color::Yellow(), "seed-bind: 平移后填充跟随圆");
+        expect(canvas.pixel(350, 250) == Color::Black(), "seed-bind: 平移后旧位置已清");
+
+        // 删除圆：绑定在它上面的种子填充一起删除
+        key(GLFW_KEY_DELETE);
+        ctrl.render(canvas);
+        expect(canvas.pixel(430, 240) == Color::Black(), "seed-bind: 删除圆后填充一起删除");
+    }
+    {
+        // 多边形：非等比缩放时种子也应保持在内部（绑定+取整钳制）
+        PaintController ctrl;
+        FrameBuffer canvas(kWidth, kHeight);
+        auto key = [&](int k) { ctrl.onKey(k, GLFW_PRESS); };
+        auto click = [&](int x, int y) {
+            ctrl.onMouseMove({x, y});
+            ctrl.onMouseButton(0, GLFW_PRESS);
+            ctrl.onMouseButton(0, GLFW_RELEASE);
+        };
+        auto drag = [&](int x0, int y0, int x1, int y1) {
+            ctrl.onMouseMove({x0, y0});
+            ctrl.onMouseButton(0, GLFW_PRESS);
+            ctrl.onMouseMove({x1, y1});
+            ctrl.onMouseButton(0, GLFW_RELEASE);
+        };
+
+        key(GLFW_KEY_4);
+        key(GLFW_KEY_F); // 关闭多边形自身填充，只留轮廓
+        click(100, 100);
+        click(300, 100);
+        click(300, 250);
+        click(100, 250);
+        ctrl.onMouseButton(1, GLFW_PRESS); // 右键闭合
+        key(GLFW_KEY_5);
+        click(200, 175); // 多边形内种子填充
+        ctrl.render(canvas);
+        expect(canvas.pixel(200, 150) == Color::Yellow(), "seed-bind: 多边形内种子填充生效");
+
+        key(GLFW_KEY_7);
+        click(200, 100); // 上边选中多边形
+        drag(300, 175, 200, 175); // E 边柄水平缩到 0.5
+        ctrl.onMouseMove({700, 550});
+        ctrl.render(canvas);
+        expect(canvas.pixel(150, 150) == Color::Yellow(),
+               "seed-bind: 多边形非等比缩小后填充仍在内部");
+        expect(canvas.pixel(250, 175) == Color::Black(),
+               "seed-bind: 多边形缩小后旧区域未翻色");
     }
 
     return fails;

@@ -139,6 +139,9 @@ int main(int argc, char** argv) {
         click(660, 80);
         drag(660, 80, -1600, -1700);
         drag(-1600, -1700, 660, 80);
+        drag(660, 140, 545, 25); // 填充圆缩到接近最小半径
+        drag(545, 25, -1600, -1700); // 极小填充圆再拖出画布
+        drag(-1600, -1700, 545, 25);
         drag(-2000, -2000, 2000, 2000); // 超大框选
         for (int i = 0; i < 8; ++i) {
             key(GLFW_KEY_RIGHT); // 方向键微移出界
@@ -185,6 +188,8 @@ int main(int argc, char** argv) {
         ctrl.onMouseButton(1, GLFW_PRESS);
         key(GLFW_KEY_2);
         drag(550, 300, 650, 300);
+        key(GLFW_KEY_5);
+        click(550, 300); // 圆内种子填充：拖拽时每帧会重放 flood fill
         key(GLFW_KEY_8);
         click(380, 450);
         click(460, 380);
@@ -241,7 +246,8 @@ int main(int argc, char** argv) {
         const auto t1 = std::chrono::steady_clock::now();
         const double dragMs =
             std::chrono::duration<double, std::milli>(t1 - t0).count() / kDragFrames;
-        std::cout << "transform drag (clip on): " << dragMs << " ms/frame" << std::endl;
+        std::cout << "transform drag + seed fill (clip on): " << dragMs << " ms/frame"
+                  << std::endl;
         return 0;
     }
 
