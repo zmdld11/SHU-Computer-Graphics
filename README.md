@@ -21,6 +21,7 @@ cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build
 
 # 方式二：CLion —— 直接用 Open 打开本目录（自带 CMake/Ninja）
+#           运行配置选 farm-game = 直接进游戏；选 cg-engine = 编辑器/命令行模式
 # 方式三：Visual Studio —— 文件→打开→CMake，选择本目录
 ```
 
@@ -32,10 +33,14 @@ cmake --build build
 ./build/cg-engine --stress-ui # 无窗口交互压力测试（越界画图/拖拽出画布/极小裁剪窗，崩溃回归）
 ./build/cg-engine --bench-ui # 无窗口性能基准（裁剪开/关、凸多边形窗、拖拽帧耗时）
 
-./build/cg-engine --game         # 胖龙农场：全鼠标点选移动（M1）
+./build/farm-game                # 直接进入胖龙农场（CLion 选 farm-game 目标即可）
+./build/cg-engine --game         # 同一游戏的命令行入口（M1：全鼠标点选移动）
 ./build/cg-engine --game-capture # 无窗口导出 game-world/pond/farm.ppm 美术预览
 ./build/cg-engine --game-smoke   # 无窗口农场自测（格点路径/镜头/重开）
 ```
+
+> CLion 打开的是 **`cg-labs` 目录**（`CMakeLists.txt` 所在层）。加载后左上角运行配置选
+> `farm-game`，点运行直接进游戏；`cg-engine` 则用于编辑器和其他命令行模式。
 
 > Windows 工具链：MSVC (VS2022) 或 MinGW 皆可。
 
@@ -79,6 +84,8 @@ cmake --build build
 
 地图 1536×1152，窗口 800×600 跟随角色滚动，到世界边缘后镜头停住、角色偏移。静态背景以 2× 超采样烘焙一次，之后每帧只做相机窗口拷贝；胖龙、农田、池塘、土路全部由手写光栅算法和矢量图元绘制，无外部素材。
 
+CLion 里选 **`farm-game`** 目标直接运行（无需参数）；命令行也可用 `./build/farm-game` 或 `./build/cg-engine --game`。
+
 ## 目录结构
 
 ```
@@ -94,7 +101,8 @@ SHU-Computer-Graphics/
 │   ├── game/          # 期末项目：FarmLayout/FarmWorld/FarmRender/FarmGame
 │   ├── tests/         # 算法自测（--smoke）、演示图（--demo）、农场自测（--game-smoke）
 │   ├── ui/            # GLFW 窗口 + PaintController 交互状态机 + 自绘任务栏（Text 系统字体栅格化，Font5x7 回退）
-│   └── main.cpp
+│   ├── main.cpp       # cg-engine 入口：编辑器 + 各命令行模式
+│   └── game_main.cpp  # farm-game 入口：直接进游戏
 └── CMakeLists.txt     # 仓库不含任何第三方源码
 ```
 

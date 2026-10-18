@@ -19,6 +19,9 @@
   （PPM 导出从 tests 抽到 core）、`Window::setMinSize`
 - **入口**：`--game`、`--game-capture`（三张 PPM）、`--game-smoke`；
   `PaintController` 与实验室交互路径零改动
+- **构建**：引擎实现抽成 `cg-engine-lib` 静态库；新增 `farm-game` 可执行目标，
+  CLion 直接选它运行（无需 Program arguments），`cg-engine` 保留全部命令行模式；
+  源码只编译一遍
 
 ### 验证
 
@@ -28,7 +31,8 @@
   到点停止、点水面→栈道尽头、L 形受阻→BFS 且全程可行走、点农田→田块中心、
   镜头四角 clamp、重开复位
 - MinGW Release、MinGW Debug（-Og + 断言）、MSVC ASan 均构建通过；
-  ASan 下 `--game-smoke` 与 `--game-capture` 无报告
+  `cg-engine` 与 `farm-game` 两个目标均能启动；ASan 下 `--game-smoke` 与
+  `--game-capture` 无报告
 - `--game-capture` 输出 `game-world.ppm`（1536×1152）与
   `game-pond.ppm` / `game-farm.ppm`（800×600）
 
