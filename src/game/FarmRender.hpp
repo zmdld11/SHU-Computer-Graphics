@@ -20,6 +20,9 @@ public:
     // 美术评审/报告插图：输出整张 1536×1152 世界图（2× 超采样后降采样）。
     FrameBuffer captureWorld(const FarmWorld& world) const;
 
+    // 汇报/报告用的纯背景：空田、无角色、无 HUD。
+    FrameBuffer captureBackground() const;
+
 private:
     FrameBuffer background_;
 };

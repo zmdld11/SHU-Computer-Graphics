@@ -35,7 +35,7 @@ cmake --build build
 
 ./build/farm-game                # 直接进入胖龙农场（CLion 选 farm-game 目标即可）
 ./build/cg-engine --game         # 同一游戏的命令行入口（M1：全鼠标点选移动）
-./build/cg-engine --game-capture # 无窗口导出 game-world/pond/farm.ppm 美术预览
+./build/cg-engine --game-capture # 无窗口导出 game-background/world/pond/farm.ppm 美术预览
 ./build/cg-engine --game-smoke   # 无窗口农场自测（格点路径/镜头/重开）
 ```
 

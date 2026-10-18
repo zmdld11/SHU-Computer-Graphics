@@ -1135,4 +1135,8 @@ FrameBuffer FarmRender::captureWorld(const FarmWorld& world) const {
     return out;
 }
 
+FrameBuffer FarmRender::captureBackground() const {
+    return background_;
+}
+
 } // namespace cg::game

@@ -137,6 +137,17 @@ bool writeFarmCapture() {
     FarmWorld world;
     world.setViewport(800, 600);
 
+    // 汇报/报告用的纯背景：空田、无角色、无 HUD。
+    {
+        FarmWorld bgWorld;
+        bgWorld.setViewport(800, 600);
+        FarmRender bgRender;
+        bgRender.build(bgWorld);
+        if (!cg::writePPM("game-background.ppm", bgRender.captureBackground())) {
+            return false;
+        }
+    }
+
     // 美术展示用的一组作物：三种作物、三个生长阶段、干土/湿土都有。
     world.debugPlant(0, Seed::Tea, CropStage::Mature, false);
     world.debugPlant(1, Seed::Tea, CropStage::Sprout, true);
@@ -172,7 +183,8 @@ bool writeFarmCapture() {
         return false;
     }
 
-    std::cout << "[game] 已写出 game-world.ppm / game-pond.ppm / game-farm.ppm" << std::endl;
+    std::cout << "[game] 已写出 game-background.ppm / game-world.ppm / "
+                 "game-pond.ppm / game-farm.ppm" << std::endl;
     return true;
 }
 
