@@ -2,70 +2,85 @@
 // 实现 CPU 像素画板：一块按行存储的内存像素数组，putPixel 是全项目唯一的画点入口，所有实验算法都画在它上面。
 #include "core/FrameBuffer.hpp"
 
-#include <cassert>
+#include <algorithm>
+#include <cstring>
 
 namespace cg {
+namespace {
 
-// 尺寸与像素缓冲必须严格同步：一旦失配（如堆被破坏），下标守卫形同虚设
-static void assertSizeInvariant([[maybe_unused]] int width,
-                                [[maybe_unused]] int height,
-                                [[maybe_unused]] std::size_t pixels) {
-    assert(pixels == static_cast<std::size_t>(width) * static_cast<std::size_t>(height) * 4);
+std::size_t rowOffset(int width, int y) {
+    return static_cast<std::size_t>(y) * static_cast<std::size_t>(width);
 }
 
-    FrameBuffer::FrameBuffer(int width, int height)
-        : width_(width), height_(height),
-          pixels_(static_cast<std::size_t>(width) * static_cast<std::size_t>(height) * 4, 0) {}
+} // namespace
 
-    // 画布大小改变时重新设定
-    void FrameBuffer::resize(int width, int height) {
-        width_ = width;
-        height_ = height;
-        pixels_.assign(static_cast<std::size_t>(width) * static_cast<std::size_t>(height) * 4, 0);
-    }
+FrameBuffer::FrameBuffer(int width, int height)
+    : width_(width), height_(height),
+      pixels_(static_cast<std::size_t>(width > 0 ? width : 0) *
+                  static_cast<std::size_t>(height > 0 ? height : 0),
+              0) {}
 
-    // 复制整块画板
-    void FrameBuffer::copyFrom(const FrameBuffer& other) {
-        if (width_ != other.width_ || height_ != other.height_) {
-            width_ = other.width_;
-            height_ = other.height_;
+// 画布大小改变时重新设定
+void FrameBuffer::resize(int width, int height) {
+    width_ = width;
+    height_ = height;
+    pixels_.assign(static_cast<std::size_t>(width > 0 ? width : 0) *
+                       static_cast<std::size_t>(height > 0 ? height : 0),
+                   0);
+}
+
+// 复制整块画板：同尺寸时一条 memcpy；尺寸变化才重新分配
+void FrameBuffer::copyFrom(const FrameBuffer& other) {
+    if (width_ == other.width_ && height_ == other.height_) {
+        if (!pixels_.empty()) {
+            std::memcpy(pixels_.data(), other.pixels_.data(),
+                        pixels_.size() * sizeof(std::uint32_t));
         }
-        pixels_ = other.pixels_;
+        return;
     }
+    width_ = other.width_;
+    height_ = other.height_;
+    pixels_ = other.pixels_;
+}
 
-    // 画布颜色填充
-    void FrameBuffer::clear(const Color& color) {
-        for (std::size_t i = 0; i + 3 < pixels_.size(); i += 4) {
-            pixels_[i + 0] = color.r;
-            pixels_[i + 1] = color.g;
-            pixels_[i + 2] = color.b;
-            pixels_[i + 3] = 255;
-        }
+// 画布颜色填充：按 32 位像素整块填充，比逐字节循环快得多
+void FrameBuffer::clear(const Color& color) {
+    const std::uint32_t v = pack(color);
+    std::fill(pixels_.begin(), pixels_.end(), v);
+}
+
+void FrameBuffer::fillRect(int x0, int y0, int x1, int y1, const Color& color) {
+    if (x1 < x0 || y1 < y0) {
+        return;
     }
-
-    // 画笔函数
-    void FrameBuffer::putPixel(int x, int y, const Color& color) {
-        assertSizeInvariant(width_, height_, pixels_.size());
-        if (x < 0 || x >= width_ || y < 0 || y >= height_) {
-            return;
-        }
-
-        // 获取二维转一维坐标
-        const std::size_t i = (static_cast<std::size_t>(y) * static_cast<std::size_t>(width_) + static_cast<std::size_t>(x)) * 4;
-        pixels_[i + 0] = color.r;
-        pixels_[i + 1] = color.g;
-        pixels_[i + 2] = color.b;
-        pixels_[i + 3] = 255;
+    const int xa = std::max(0, x0);
+    const int xb = std::min(width_ - 1, x1);
+    const int ya = std::max(0, y0);
+    const int yb = std::min(height_ - 1, y1);
+    if (xa > xb || ya > yb) {
+        return;
     }
-
-    // 获取像素颜色
-    Color FrameBuffer::pixel(int x, int y) const {
-        assertSizeInvariant(width_, height_, pixels_.size());
-        if (x < 0 || x >= width_ || y < 0 || y >= height_) {
-            return Color::Black();
-        }
-        const std::size_t i = (static_cast<std::size_t>(y) * static_cast<std::size_t>(width_) + static_cast<std::size_t>(x)) * 4;
-        return Color{pixels_[i + 0], pixels_[i + 1], pixels_[i + 2]};
+    const std::uint32_t v = pack(color);
+    for (int y = ya; y <= yb; ++y) {
+        auto* row = pixels_.data() + rowOffset(width_, y);
+        std::fill(row + xa, row + xb + 1, v);
     }
+}
+
+void FrameBuffer::copySpanFrom(const FrameBuffer& src, int y, int x0, int x1) {
+    if (y < 0 || y >= height_ || y >= src.height_) {
+        return;
+    }
+    const int xa = std::max(0, x0);
+    const int xb = std::min(std::min(width_ - 1, src.width_ - 1), x1);
+    if (xa > xb) {
+        return;
+    }
+    const std::size_t srcRow = rowOffset(src.width_, y);
+    const std::size_t dstRow = rowOffset(width_, y);
+    std::memcpy(pixels_.data() + dstRow + static_cast<std::size_t>(xa),
+                src.pixels_.data() + srcRow + static_cast<std::size_t>(xa),
+                static_cast<std::size_t>(xb - xa + 1) * sizeof(std::uint32_t));
+}
 
 } // namespace cg

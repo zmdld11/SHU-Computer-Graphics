@@ -74,8 +74,9 @@ void scanlineFillPolygon(FrameBuffer& fb, const std::vector<IPoint>& polygon,
 
         // 两两配对：[x0, x1] 为多边形内部区间（奇数个交点时忽略最后一个）
         for (std::size_t i = 0; i + 1 < aet.size(); i += 2) {
-            const int xStart = static_cast<int>(std::ceil(aet[i].x));
-            const int xEnd = static_cast<int>(std::floor(aet[i + 1].x));
+            const int xStart = std::max(0, static_cast<int>(std::ceil(aet[i].x)));
+            const int xEnd =
+                std::min(fb.width() - 1, static_cast<int>(std::floor(aet[i + 1].x)));
             for (int x = xStart; x <= xEnd; ++x) {
                 fb.putPixel(x, y, color);
             }

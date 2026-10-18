@@ -2,6 +2,34 @@
 
 本项目以"实验任务"为单位推进：每个实验一个分支、一个 PR、一个同名 tag（约定见 [CONTRIBUTING.md](CONTRIBUTING.md)）。
 
+## 性能 — 2026-10-18：裁剪常态化与渲染路径提速（#55）
+
+### 变更
+
+- **FrameBuffer 像素存储改 32 位打包**（每元素一个 RGBA），`putPixel/pixel` 移到头文件内联，
+  保留尺寸断言与越界守卫；`clear` 用整块 32 位填充，`copyFrom` 同尺寸走 `memcpy`
+- 新增 `fillRect` 与 `copySpanFrom`：闭区间矩形填充/行段整块拷贝
+- **常驻裁剪显示层缓存** `clipCache_`：只在提交层重绘、裁剪窗变化、窗口 resize 时重建；
+  矩形窗逐行 `copySpanFrom`，凸多边形窗重建时按扫描线求 [lo,hi] 后逐行整段拷贝；
+  其余帧只做一次整块 `memcpy`
+- 渲染路径：`scanlineFillPolygon` 的 x 范围夹到画布；`drawLine` 增加画布包围盒快速剔除；
+  任务栏背景/按钮底色改用 `fillRect`；标题字符串变化才 `setTitle`；`glfwSwapInterval(1)`；
+  GCC/Clang Debug 加 `-Og`（保留断言与调试信息）
+- 新增 `--bench-ui`：无窗口打印裁剪关/矩形窗/凸多边形窗/拖拽填充圆的平均帧耗时
+
+### 为什么
+
+用户反馈"裁剪算法常态化以后卡卡的"。根因不是裁剪算法本身，而是显示层每帧逐像素
+`pixel()+putPixel()` 重建掩码，叠加无 vsync 的持续渲染与 Debug 逐像素断言。
+
+### 怎么验证
+
+- smoke 新增 14 项（fb: fillRect/越界夹取/copySpanFrom/copyFrom；clip-cache:
+  矩形窗内/外/V 开关/改窗/resize；凸多边形窗内/外），累计 163 项全绿
+- `--stress-ui` 通过
+- `--bench-ui`（MinGW Release）：裁剪关 0.107 ms/帧、矩形窗缓存 0.096 ms/帧、
+  凸多边形窗缓存 0.102 ms/帧、裁剪开启时拖拽 0.356 ms/帧——裁剪开/关已同一量级
+
 ## 增强 — 2026-10-17：修饰键约束——Shift 45° 吸附 + Ctrl 定步长（#53）
 
 ### 变更

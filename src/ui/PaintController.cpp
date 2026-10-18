@@ -280,50 +280,68 @@ void PaintController::commitRender() {
     // 裁剪窗口边框不画进提交层：它在预览层绘制（常驻裁剪时所有模式可见，且不被掩码覆盖）
 }
 
-// 常驻裁剪的显示层拷贝：窗口内照抄提交层，窗口外保持背景色（黑）。
+// 常驻裁剪的显示层缓存：窗口内照抄提交层，窗口外保持背景色（黑）。
+// 只在提交层重绘/裁剪窗变化/画布尺寸变化时重建，之后每帧一条 memcpy 上屏。
 // 不改提交层——关掉开关，原图立即完整恢复。
-void PaintController::copyCommittedClipped(FrameBuffer& fb) const {
-    fb.clear(Color::Black());
+void PaintController::rebuildClipCache() {
+    const int w = committed_->width();
+    const int h = committed_->height();
+    if (!clipCache_ || clipCache_->width() != w || clipCache_->height() != h) {
+        clipCache_ = std::make_unique<FrameBuffer>(w, h);
+    }
+    clipCache_->clear(Color::Black());
+
     if (clipWin_.kind == ClipWindow::Kind::Rect) {
         const int x0 = std::max(0, clipWin_.rect.xmin);
-        const int x1 = std::min(fb.width() - 1, clipWin_.rect.xmax);
+        const int x1 = std::min(w - 1, clipWin_.rect.xmax);
         const int y0 = std::max(0, clipWin_.rect.ymin);
-        const int y1 = std::min(fb.height() - 1, clipWin_.rect.ymax);
+        const int y1 = std::min(h - 1, clipWin_.rect.ymax);
         for (int y = y0; y <= y1; ++y) {
-            for (int x = x0; x <= x1; ++x) {
-                fb.putPixel(x, y, committed_->pixel(x, y));
+            clipCache_->copySpanFrom(*committed_, y, x0, x1);
+        }
+    } else {
+        // 凸多边形窗口：每条扫描线与凸多边形相交为单段 [lo, hi]，逐行整段拷贝
+        const auto& poly = clipWin_.poly;
+        if (poly.empty()) {
+            clipCacheDirty_ = false;
+            return;
+        }
+        float minY = poly[0].y;
+        float maxY = minY;
+        for (const auto& p : poly) {
+            minY = std::min(minY, p.y);
+            maxY = std::max(maxY, p.y);
+        }
+        const int yLo = std::max(0, static_cast<int>(std::floor(minY)));
+        const int yHi = std::min(h - 1, static_cast<int>(std::ceil(maxY)));
+        for (int y = yLo; y <= yHi; ++y) {
+            int lo = std::numeric_limits<int>::max();
+            int hi = std::numeric_limits<int>::min();
+            for (std::size_t i = 0; i < poly.size(); ++i) {
+                const FPoint& p1 = poly[i];
+                const FPoint& p2 = poly[(i + 1) % poly.size()];
+                if ((p1.y <= y) == (p2.y <= y)) {
+                    continue; // 该边不跨此扫描线
+                }
+                const float t = (static_cast<float>(y) - p1.y) / (p2.y - p1.y);
+                const int x = static_cast<int>(std::lround(p1.x + (p2.x - p1.x) * t));
+                lo = std::min(lo, x);
+                hi = std::max(hi, x);
+            }
+            if (lo <= hi) {
+                clipCache_->copySpanFrom(*committed_, y, lo, hi);
             }
         }
-        return;
     }
-    // 凸多边形窗口：每条扫描线与凸多边形相交为单段 [lo, hi]，逐段拷贝
-    const auto& poly = clipWin_.poly;
-    float minY = poly.empty() ? 0.0f : poly[0].y;
-    float maxY = minY;
-    for (const auto& p : poly) {
-        minY = std::min(minY, p.y);
-        maxY = std::max(maxY, p.y);
+    clipCacheDirty_ = false;
+}
+
+void PaintController::copyCommittedClipped(FrameBuffer& fb) {
+    if (clipCacheDirty_ || !clipCache_ || clipCache_->width() != fb.width() ||
+        clipCache_->height() != fb.height()) {
+        rebuildClipCache();
     }
-    const int yLo = std::max(0, static_cast<int>(std::floor(minY)));
-    const int yHi = std::min(fb.height() - 1, static_cast<int>(std::ceil(maxY)));
-    for (int y = yLo; y <= yHi; ++y) {
-        int lo = std::numeric_limits<int>::max();
-        int hi = std::numeric_limits<int>::min();
-        for (std::size_t i = 0; i < poly.size(); ++i) {
-            const FPoint& p1 = poly[i];
-            const FPoint& p2 = poly[(i + 1) % poly.size()];
-            if ((p1.y <= y) == (p2.y <= y)) {
-                continue; // 该边不跨此扫描线
-            }
-            const float t = (static_cast<float>(y) - p1.y) / (p2.y - p1.y);
-            const int x = static_cast<int>(std::lround(p1.x + (p2.x - p1.x) * t));
-            lo = std::min(lo, x);
-            hi = std::max(hi, x);
-        }
-        for (int x = std::max(0, lo); x <= std::min(fb.width() - 1, hi); ++x) {
-            fb.putPixel(x, y, committed_->pixel(x, y));
-        }
-    }
+    fb.copyFrom(*clipCache_);
 }
 
 void PaintController::drawPreview(FrameBuffer& fb) const {
@@ -472,9 +490,10 @@ void PaintController::render(FrameBuffer& fb) {
     if (dirty_) {
         commitRender();
         dirty_ = false;
+        clipCacheDirty_ = true; // 提交层变了，裁剪掩码缓存失效
     }
     if (clipOn_ && clipWin_.valid) {
-        copyCommittedClipped(fb); // 常驻裁剪：窗口外内容不显示
+        copyCommittedClipped(fb); // 常驻裁剪：缓存命中时只做一次整块拷贝
     } else {
         fb.copyFrom(*committed_); // 提交层 → 显示层
     }
@@ -789,19 +808,11 @@ void PaintController::drawToolbar(FrameBuffer& fb) const {
     const Color kActive(70, 110, 180);
     const Color kBorder(120, 120, 130);
     const int tbH = toolbarHeight();
-    for (int y = 0; y < tbH && y < fb.height(); ++y) {
-        for (int x = 0; x < fb.width(); ++x) {
-            fb.putPixel(x, y, kBg);
-        }
-    }
+    fb.fillRect(0, 0, fb.width() - 1, tbH - 1, kBg);
     std::vector<ToolButton> btns;
     buildToolbar(btns);
     for (const auto& b : btns) {
-        for (int y = b.y; y < b.y + b.h; ++y) {
-            for (int x = b.x; x < b.x + b.w; ++x) {
-                fb.putPixel(x, y, b.active ? kActive : kFace);
-            }
-        }
+        fb.fillRect(b.x, b.y, b.x + b.w - 1, b.y + b.h - 1, b.active ? kActive : kFace);
         for (int x = b.x; x < b.x + b.w; ++x) { // 1px 边框
             fb.putPixel(x, b.y, kBorder);
             fb.putPixel(x, b.y + b.h - 1, kBorder);

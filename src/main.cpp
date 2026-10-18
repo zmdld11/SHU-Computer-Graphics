@@ -8,6 +8,7 @@
 #include "ui/Window.hpp"
 
 #include <GLFW/glfw3.h>
+#include <chrono>
 #include <iostream>
 #include <memory>
 #include <string>
@@ -157,6 +158,93 @@ int main(int argc, char** argv) {
         return 0;
     }
 
+    // --bench-ui：不开窗口，测裁剪常态化的显示层合成与拖拽帧成本（性能证据/回归对比）
+    if (arg == "--bench-ui") {
+        cg::FrameBuffer fb(kWidth, kHeight);
+        cg::PaintController ctrl;
+        auto key = [&](int k) { ctrl.onKey(k, GLFW_PRESS); };
+        auto click = [&](int x, int y) {
+            ctrl.onMouseMove({x, y});
+            ctrl.onMouseButton(0, GLFW_PRESS);
+            ctrl.onMouseButton(0, GLFW_RELEASE);
+        };
+        auto drag = [&](int x0, int y0, int x1, int y1) {
+            ctrl.onMouseMove({x0, y0});
+            ctrl.onMouseButton(0, GLFW_PRESS);
+            ctrl.onMouseMove({x1, y1});
+            ctrl.onMouseButton(0, GLFW_RELEASE);
+        };
+
+        // 场景：直线 + 填充多边形 + 圆 + 曲线
+        key(GLFW_KEY_1);
+        drag(40, 100, 740, 520);
+        key(GLFW_KEY_4);
+        click(120, 200);
+        click(320, 180);
+        click(200, 360);
+        ctrl.onMouseButton(1, GLFW_PRESS);
+        key(GLFW_KEY_2);
+        drag(550, 300, 650, 300);
+        key(GLFW_KEY_8);
+        click(380, 450);
+        click(460, 380);
+        click(560, 470);
+        ctrl.onMouseButton(1, GLFW_PRESS);
+
+        auto measure = [&](const char* name) {
+            for (int i = 0; i < 5; ++i) {
+                ctrl.render(fb); // 预热：首帧会重建提交层/裁剪缓存
+            }
+            constexpr int kFrames = 60;
+            const auto t0 = std::chrono::steady_clock::now();
+            for (int i = 0; i < kFrames; ++i) {
+                ctrl.render(fb);
+            }
+            const auto t1 = std::chrono::steady_clock::now();
+            const double ms =
+                std::chrono::duration<double, std::milli>(t1 - t0).count() / kFrames;
+            std::cout << name << ": " << ms << " ms/frame" << std::endl;
+        };
+
+        // 矩形常驻裁剪窗
+        key(GLFW_KEY_6);
+        key(GLFW_KEY_K);
+        drag(100, 100, 700, 500);
+        measure("clip rect (cached)");
+
+        // 关闭裁剪（整块拷贝基准）
+        key(GLFW_KEY_V);
+        measure("clip off");
+        key(GLFW_KEY_V);
+
+        // 凸多边形常驻裁剪窗
+        key(GLFW_KEY_6);
+        key(GLFW_KEY_P);
+        click(150, 180);
+        click(650, 180);
+        click(650, 450);
+        click(150, 450);
+        ctrl.onMouseButton(1, GLFW_PRESS);
+        measure("clip convex poly (cached)");
+
+        // 拖拽选中圆：每个鼠标移动都重绘提交层 + 重建裁剪缓存
+        key(GLFW_KEY_7);
+        click(650, 300); // 圆环右轴点
+        ctrl.onMouseButton(0, GLFW_PRESS);
+        const auto t0 = std::chrono::steady_clock::now();
+        constexpr int kDragFrames = 60;
+        for (int i = 0; i < kDragFrames; ++i) {
+            ctrl.onMouseMove({650 + (i % 40), 300 + (i % 20) - 10});
+            ctrl.render(fb);
+        }
+        ctrl.onMouseButton(0, GLFW_RELEASE);
+        const auto t1 = std::chrono::steady_clock::now();
+        const double dragMs =
+            std::chrono::duration<double, std::milli>(t1 - t0).count() / kDragFrames;
+        std::cout << "transform drag (clip on): " << dragMs << " ms/frame" << std::endl;
+        return 0;
+    }
+
     const bool smoke = (arg == "--smoke"); // --smoke：隐藏窗口跑算法自测即可退出
 
     cg::Window window(kWidth, kHeight, "SHU-Computer-Graphics 绘图引擎", smoke);
@@ -202,11 +290,16 @@ int main(int argc, char** argv) {
         ctrl.onMouseMove({int(x), int(y)}, mods);
     });
 
+    std::string lastTitle;
     while (!window.shouldClose()) {
         // 1. 画出这一帧所有的像素
         ctrl.render(live);
-        // 2. 标题栏显示当前模式提示
-        window.setTitle(ctrl.title());
+        // 2. 标题栏显示当前模式提示（只在内容变化时改窗口标题，避免每帧走窗口消息）
+        std::string t = ctrl.title();
+        if (t != lastTitle) {
+            window.setTitle(t);
+            lastTitle = t;
+        }
         // 3. 像素阵列 → GPU → 窗口
         liveCanvas.present(live);
         // 4. 显示画面（双缓冲）

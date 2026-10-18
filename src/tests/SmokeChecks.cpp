@@ -1165,6 +1165,96 @@ int runAlgorithmSelfChecks() {
                "ui-oob: 8×8 窗口外不显示绿色");
     }
 
+    // ================= 显示层整块操作（#55：FrameBuffer 提速） =================
+    {
+        FrameBuffer a(16, 8);
+        a.clear(Color::Black());
+        a.fillRect(2, 3, 5, 6, Color::Red());
+        expect(a.pixel(2, 3) == Color::Red() && a.pixel(5, 6) == Color::Red() &&
+                   a.pixel(1, 3) == Color::Black() && a.pixel(6, 3) == Color::Black(),
+               "fb: fillRect 闭区间与边界");
+        a.fillRect(-5, -5, 100, 100, Color::Blue());
+        expect(a.pixel(0, 0) == Color::Blue() && a.pixel(15, 7) == Color::Blue(),
+               "fb: fillRect 越界自动夹取");
+
+        FrameBuffer b(16, 8);
+        b.copySpanFrom(a, 4, 3, 6);
+        expect(b.pixel(3, 4) == Color::Blue() && b.pixel(2, 4) == Color::Black() &&
+                   b.pixel(7, 4) == Color::Black(),
+               "fb: copySpanFrom 整段拷贝");
+
+        FrameBuffer c(4, 4);
+        c.copyFrom(a);
+        expect(c.width() == 16 && c.height() == 8 && c.pixel(15, 7) == Color::Blue(),
+               "fb: copyFrom 尺寸不同自动重建");
+    }
+
+    // ================= 常驻裁剪显示层缓存（#55） =================
+    {
+        PaintController ctrl;
+        FrameBuffer canvas(kWidth, kHeight);
+        auto key = [&](int k) { ctrl.onKey(k, GLFW_PRESS); };
+        auto drag = [&](int x0, int y0, int x1, int y1) {
+            ctrl.onMouseMove({x0, y0});
+            ctrl.onMouseButton(0, GLFW_PRESS);
+            ctrl.onMouseMove({x1, y1});
+            ctrl.onMouseButton(0, GLFW_RELEASE);
+        };
+
+        key(GLFW_KEY_1);
+        drag(100, 300, 700, 300); // 横穿画布的白色直线
+        key(GLFW_KEY_6);
+        key(GLFW_KEY_K);
+        drag(300, 200, 500, 400); // 矩形裁剪窗，自动开启常驻裁剪
+        ctrl.render(canvas);
+        expect(canvas.pixel(400, 300) == Color::White(), "clip-cache: 矩形窗内可见");
+        expect(canvas.pixel(100, 300) == Color::Black(), "clip-cache: 矩形窗外隐藏");
+
+        key(GLFW_KEY_V); // 关裁剪：缓存不重建，但显示层应整块恢复
+        ctrl.render(canvas);
+        expect(canvas.pixel(100, 300) == Color::White(), "clip-cache: V 关后完整画面恢复");
+        key(GLFW_KEY_V); // 再开：沿用有效缓存
+        ctrl.render(canvas);
+        expect(canvas.pixel(100, 300) == Color::Black(), "clip-cache: V 再开恢复掩码");
+
+        key(GLFW_KEY_K); // 改窗口：缓存必须失效重建
+        drag(600, 100, 700, 500);
+        ctrl.render(canvas);
+        expect(canvas.pixel(650, 300) == Color::White(), "clip-cache: 改窗后新窗口内可见");
+        expect(canvas.pixel(400, 300) == Color::Black(), "clip-cache: 改窗后旧区域隐藏");
+
+        FrameBuffer small(640, 480); // resize：提交层与裁剪缓存都要按新尺寸重建
+        ctrl.render(small);
+        expect(small.pixel(620, 300) == Color::White(), "clip-cache: resize 后窗口内可见");
+        expect(small.pixel(400, 300) == Color::Black(), "clip-cache: resize 后窗口外隐藏");
+    }
+
+    // ================= 凸多边形裁剪窗缓存（#55） =================
+    {
+        PaintController ctrl;
+        FrameBuffer canvas(kWidth, kHeight);
+        auto key = [&](int k) { ctrl.onKey(k, GLFW_PRESS); };
+        auto click = [&](int x, int y) {
+            ctrl.onMouseMove({x, y});
+            ctrl.onMouseButton(0, GLFW_PRESS);
+            ctrl.onMouseButton(0, GLFW_RELEASE);
+        };
+        key(GLFW_KEY_1);
+        ctrl.onMouseMove({100, 300});
+        ctrl.onMouseButton(0, GLFW_PRESS);
+        ctrl.onMouseMove({700, 300});
+        ctrl.onMouseButton(0, GLFW_RELEASE);
+        key(GLFW_KEY_6);
+        key(GLFW_KEY_P);
+        click(300, 200);
+        click(500, 200);
+        click(400, 400);
+        ctrl.onMouseButton(1, GLFW_PRESS); // 右键闭合凸多边形窗
+        ctrl.render(canvas);
+        expect(canvas.pixel(400, 300) == Color::White(), "clip-cache: 凸多边形窗内可见");
+        expect(canvas.pixel(200, 300) == Color::Black(), "clip-cache: 凸多边形窗外隐藏");
+    }
+
     return fails;
 }
 

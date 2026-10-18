@@ -88,6 +88,11 @@ std::vector<CirclePixel> circlePoints(IPoint center, int radius) {
 } // namespace
 
 void drawLine(FrameBuffer& fb, IPoint a, IPoint b, const Color& color, const LineStyle& style) {
+    // 快速剔除：线段包围盒完全在画布外时直接返回，避免拖到远处后仍逐点循环
+    if (std::max(a.x, b.x) < 0 || std::min(a.x, b.x) >= fb.width() ||
+        std::max(a.y, b.y) < 0 || std::min(a.y, b.y) >= fb.height()) {
+        return;
+    }
     const int dx = b.x >= a.x ? b.x - a.x : a.x - b.x;
     const int dy = b.y >= a.y ? b.y - a.y : a.y - b.y;
     const int sx = b.x >= a.x ? 1 : -1;
