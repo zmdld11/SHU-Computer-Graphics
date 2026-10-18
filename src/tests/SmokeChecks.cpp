@@ -4,6 +4,7 @@
 
 #include "core/Color.hpp"
 #include "core/FrameBuffer.hpp"
+#include "core/ImageIO.hpp"
 #include "curves/Bezier.hpp"
 #include "curves/BSpline.hpp"
 #include "raster/Clip.hpp"
@@ -1282,6 +1283,13 @@ int runAlgorithmSelfChecks() {
         expect(bufD.pixel(0, 2) == Color::Red() && bufD.pixel(5, 2) == Color::Red() &&
                    bufD.pixel(6, 2) == Color::Black(),
                "fb: fillSpan 行内整段填充与边界");
+
+        FrameBuffer bufE(6, 4);
+        bufE.clear(Color::Green());
+        bufE.copyRectFrom(bufA, 1, 2, 4, 3, 2, 1);
+        expect(bufE.pixel(2, 1) == Color::Blue() && bufE.pixel(5, 3) == Color::Blue() &&
+                   bufE.pixel(1, 1) == Color::Green() && bufE.pixel(2, 0) == Color::Green(),
+               "fb: copyRectFrom 子矩形与边界");
     }
 
     // ================= 常驻裁剪显示层缓存（#55） =================
@@ -1443,21 +1451,7 @@ int runAlgorithmSelfChecks() {
 }
 
 bool writePPM(const char* path, const FrameBuffer& fb) {
-    std::ofstream out(path, std::ios::binary);
-    if (!out) {
-        std::cerr << "[demo] 无法写入 " << path << std::endl;
-        return false;
-    }
-    out << "P6\n" << fb.width() << " " << fb.height() << "\n255\n";
-    for (int y = 0; y < fb.height(); ++y) {
-        for (int x = 0; x < fb.width(); ++x) {
-            const Color c = fb.pixel(x, y);
-            out.put(static_cast<char>(c.r));
-            out.put(static_cast<char>(c.g));
-            out.put(static_cast<char>(c.b));
-        }
-    }
-    return out.good();
+    return cg::writePPM(path, fb);
 }
 
 bool writeDemoImage(const char* path) {
@@ -1545,7 +1539,7 @@ bool writeDemoImage(const char* path) {
         }
     }
 
-    return writePPM(path, fb);
+    return cg::writePPM(path, fb);
 }
 
 } // namespace cg::tests

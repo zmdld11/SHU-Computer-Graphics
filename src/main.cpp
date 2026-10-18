@@ -3,6 +3,8 @@
 // 具体算法在 src/raster、src/geom、src/curves；自测与演示图在 src/tests。
 #include "core/Canvas.hpp"
 #include "core/FrameBuffer.hpp"
+#include "game/FarmGame.hpp"
+#include "tests/FarmChecks.hpp"
 #include "tests/SmokeChecks.hpp"
 #include "ui/PaintController.hpp"
 #include "ui/Window.hpp"
@@ -20,6 +22,17 @@ constexpr int kHeight = 600;
 
 int main(int argc, char** argv) {
     const std::string arg = (argc > 1) ? argv[1] : "";
+
+    // --game：农场游戏窗口；--game-capture：无窗口渲染美术预览图；--game-smoke：无窗口玩法自测
+    if (arg == "--game") {
+        return cg::game::runFarmGame();
+    }
+    if (arg == "--game-capture") {
+        return cg::game::writeFarmCapture() ? 0 : 1;
+    }
+    if (arg == "--game-smoke") {
+        return cg::tests::runFarmChecks() == 0 ? 0 : 1;
+    }
 
     // --demo：不开窗口，直接把演示场景渲染成图片（供自查/报告插图）
     if (arg == "--demo") {

@@ -26,11 +26,15 @@ cmake --build build
 
 ```bash
 ./build/cg-engine            # 交互绘图（Windows 下为 build/cg-engine.exe）
-./build/cg-engine --smoke    # 无窗口算法自测（185 项断言，退出码 0 = 通过）
+./build/cg-engine --smoke    # 无窗口算法自测（186 项断言，退出码 0 = 通过）
 ./build/cg-engine --demo     # 无窗口导出演示图 demo.ppm（自查/报告插图）
 ./build/cg-engine --demo-ui  # 无窗口导出 UI 演示图（任务栏+图形+常驻裁剪+选中）
 ./build/cg-engine --stress-ui # 无窗口交互压力测试（越界画图/拖拽出画布/极小裁剪窗，崩溃回归）
 ./build/cg-engine --bench-ui # 无窗口性能基准（裁剪开/关、凸多边形窗、拖拽帧耗时）
+
+./build/cg-engine --game         # 胖龙农场：全鼠标点选移动（M1）
+./build/cg-engine --game-capture # 无窗口导出 game-world/pond/farm.ppm 美术预览
+./build/cg-engine --game-smoke   # 无窗口农场自测（格点路径/镜头/重开）
 ```
 
 > Windows 工具链：MSVC (VS2022) 或 MinGW 皆可。
@@ -62,6 +66,19 @@ cmake --build build
 
 任务栏文字在 Windows 上由 **GDI 把系统字体（宋体 16px）栅格化成点阵**（`src/ui/Text.{hpp,cpp}`，字形按字符懒缓存），非 Windows 回退自写 5×7 点阵（`src/ui/Font5x7.hpp`）；点阵仍逐像素写入 FrameBuffer，**没有任何界面框架**。键盘按键全部保留为快捷键（与按钮共用同一操作入口 `handleAction`）。当前模式与属性仍实时显示在窗口标题栏。
 
+## 期末项目：胖龙农场（M1）
+
+基于同一套引擎的 2D 俯视农场小游戏，设计稿见 [`docs/期末项目-奶龙农场.md`](docs/期末项目-奶龙农场.md)。
+
+| 输入 | 功能 |
+|---|---|
+| 左键点地面 | 按 32px 格移动，先横后竖；被池塘/边界挡住时 BFS 绕行，停在格心 |
+| 左键点农田 | 走到田块中心（M2 到达后自动播种/浇水/收获） |
+| 左键点水面/栈道 | 走到栈道尽头（M3 到达后自动抛竿；咬钩窗口再点水面） |
+| 右键 / `1` `2` `3` / `R` | 取消移动 / 选种子 / 重开 |
+
+地图 1536×1152，窗口 800×600 跟随角色滚动，到世界边缘后镜头停住、角色偏移。静态背景以 2× 超采样烘焙一次，之后每帧只做相机窗口拷贝；胖龙、农田、池塘、土路全部由手写光栅算法和矢量图元绘制，无外部素材。
+
 ## 目录结构
 
 ```
@@ -74,7 +91,8 @@ SHU-Computer-Graphics/
 │   ├── raster/        # 图元生成（实验一）、填充与裁剪（实验二）
 │   ├── geom/          # 几何变换 Mat3：平移/放缩/旋转/绕任意参考点（实验三）
 │   ├── curves/        # Bezier（de Casteljau）+ B 样条（Cox-de Boor）曲线采样（实验四）
-│   ├── tests/         # 算法自测（--smoke）与演示图导出（--demo）
+│   ├── game/          # 期末项目：FarmLayout/FarmWorld/FarmRender/FarmGame
+│   ├── tests/         # 算法自测（--smoke）、演示图（--demo）、农场自测（--game-smoke）
 │   ├── ui/            # GLFW 窗口 + PaintController 交互状态机 + 自绘任务栏（Text 系统字体栅格化，Font5x7 回退）
 │   └── main.cpp
 └── CMakeLists.txt     # 仓库不含任何第三方源码
@@ -82,7 +100,7 @@ SHU-Computer-Graphics/
 
 **关于 OpenGL 加载器**：Windows 上 OpenGL 1.1 之后的函数地址须运行时向显卡驱动查询。这项工作由**自写**的 `src/core/GLLoader.{hpp,cpp}`（约 180 行）完成——只加载本工程实际用到的 33 个函数（`Canvas` 是唯一使用者），仓库因此不含任何第三方源码。历史版本曾用生成器库 glad（2 万余行），2026-09-20 起替换（#29）。
 
-**架构红线**：算法层（raster/geom/curves）不依赖 UI 层，绘图只经 `FrameBuffer::putPixel`；期末动画项目只调底层接口。
+**架构红线**：算法层（raster/geom/curves）不依赖 UI 层，绘图只经 `FrameBuffer::putPixel`；期末游戏项目只调底层接口，`PaintController` 一行不改。
 
 **课程要求原文**（老师实验注意事项，做任何改动前对照一遍）：
 
@@ -92,7 +110,7 @@ SHU-Computer-Graphics/
 
 | 依赖 | 用途 | 使用边界 |
 |---|---|---|
-| GLFW | 窗口与鼠标键盘事件 | 仅 `src/ui/Window.cpp` 使用 |
+| GLFW | 窗口与鼠标键盘事件 | 仅 `src/ui/Window.cpp` 使用；`src/game/FarmGame.cpp` 只读按键常量 |
 | OpenGL 3.3（系统自带 opengl32） | 把 framebuffer 贴上屏 | 仅 `src/core/Canvas.cpp` 使用 |
 | CMake | 构建 | — |
 

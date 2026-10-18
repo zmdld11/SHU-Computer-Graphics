@@ -76,6 +76,38 @@ void FrameBuffer::fillSpan(int y, int x0, int x1, const Color& color) {
     std::fill(row + xa, row + xb + 1, pack(color));
 }
 
+void FrameBuffer::copyRectFrom(const FrameBuffer& src, int srcX, int srcY, int w, int h,
+                               int dstX, int dstY) {
+    if (w <= 0 || h <= 0) {
+        return;
+    }
+    // 先把目标矩形夹到本画布，再把对应的源列夹到源画布；行方向逐行夹。
+    const int dx0 = std::max(0, dstX);
+    const int dx1 = std::min(width_, dstX + w);
+    const int dy0 = std::max(0, dstY);
+    const int dy1 = std::min(height_, dstY + h);
+    if (dx0 >= dx1 || dy0 >= dy1) {
+        return;
+    }
+    const int sx0 = std::max(0, srcX + (dx0 - dstX));
+    const int sx1 = std::min(src.width_, srcX + (dx1 - dstX));
+    if (sx0 >= sx1) {
+        return;
+    }
+    const int count = sx1 - sx0;
+    const int copyDx = dstX + (sx0 - srcX);
+    for (int dy = dy0; dy < dy1; ++dy) {
+        const int sy = srcY + (dy - dstY);
+        if (sy < 0 || sy >= src.height_) {
+            continue;
+        }
+        std::memcpy(pixels_.data() + rowOffset(width_, dy) + static_cast<std::size_t>(copyDx),
+                    src.pixels_.data() + rowOffset(src.width_, sy) +
+                        static_cast<std::size_t>(sx0),
+                    static_cast<std::size_t>(count) * sizeof(std::uint32_t));
+    }
+}
+
 void FrameBuffer::copySpanFrom(const FrameBuffer& src, int y, int x0, int x1) {
     if (y < 0 || y >= height_ || y >= src.height_) {
         return;

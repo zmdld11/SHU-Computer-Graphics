@@ -39,6 +39,9 @@ public:
     int fbWidth() const;
     int fbHeight() const;
 
+    // 最小逻辑窗口尺寸（游戏启动时设 800×600，避免 HUD 被压扁；编辑器不调用）
+    void setMinSize(int width, int height);
+
     int width() const  { return width_; }
     int height() const { return height_; }
 

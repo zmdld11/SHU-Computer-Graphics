@@ -28,13 +28,18 @@ add_executable(cg-engine
     src/core/FrameBuffer.cpp
     src/core/Canvas.cpp
     src/core/GLLoader.cpp
+    src/core/ImageIO.cpp
     src/raster/Rasterizer.cpp
     src/raster/Fill.cpp
     src/raster/Clip.cpp
     src/curves/Bezier.cpp
     src/curves/BSpline.cpp
     src/geom/Transform.cpp
+    src/game/FarmWorld.cpp
+    src/game/FarmRender.cpp
+    src/game/FarmGame.cpp
     src/tests/SmokeChecks.cpp
+    src/tests/FarmChecks.cpp
     src/ui/Window.cpp
     src/ui/PaintController.cpp
     src/ui/Text.cpp

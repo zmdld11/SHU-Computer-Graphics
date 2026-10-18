@@ -133,6 +133,12 @@ LoaderFn Window::loader() const {
     return reinterpret_cast<LoaderFn>(glfwGetProcAddress);
 }
 
+void Window::setMinSize(int width, int height) {
+    if (window_ != nullptr) {
+        glfwSetWindowSizeLimits(window_, width, height, GLFW_DONT_CARE, GLFW_DONT_CARE);
+    }
+}
+
 int Window::fbWidth() const {
     int w = 0, h = 0;
     if (window_ != nullptr) {

@@ -61,6 +61,11 @@ public:
     // 裁剪常驻显示层用它替代逐像素 pixel()+putPixel()。
     void copySpanFrom(const FrameBuffer& src, int y, int x0, int x1);
 
+    // 把 src 的任意矩形整块拷贝到本画布 (dstX,dstY)（不改尺寸，自动夹边界）。
+    // 游戏镜头滚动每帧只需按相机位置拷一块世界缓存，比逐像素重绘便宜。
+    void copyRectFrom(const FrameBuffer& src, int srcX, int srcY, int w, int h,
+                      int dstX, int dstY);
+
     // RGBA 行主序数据，供 Canvas 上屏
     const std::uint8_t* data() const {
         return reinterpret_cast<const std::uint8_t*>(pixels_.data());
