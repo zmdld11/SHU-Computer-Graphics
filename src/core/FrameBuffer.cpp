@@ -53,18 +53,27 @@ void FrameBuffer::fillRect(int x0, int y0, int x1, int y1, const Color& color) {
     if (x1 < x0 || y1 < y0) {
         return;
     }
-    const int xa = std::max(0, x0);
-    const int xb = std::min(width_ - 1, x1);
     const int ya = std::max(0, y0);
     const int yb = std::min(height_ - 1, y1);
-    if (xa > xb || ya > yb) {
+    if (ya > yb) {
         return;
     }
-    const std::uint32_t v = pack(color);
     for (int y = ya; y <= yb; ++y) {
-        auto* row = pixels_.data() + rowOffset(width_, y);
-        std::fill(row + xa, row + xb + 1, v);
+        fillSpan(y, x0, x1, color);
     }
+}
+
+void FrameBuffer::fillSpan(int y, int x0, int x1, const Color& color) {
+    if (y < 0 || y >= height_ || x1 < x0) {
+        return;
+    }
+    const int xa = std::max(0, x0);
+    const int xb = std::min(width_ - 1, x1);
+    if (xa > xb) {
+        return;
+    }
+    auto* row = pixels_.data() + rowOffset(width_, y);
+    std::fill(row + xa, row + xb + 1, pack(color));
 }
 
 void FrameBuffer::copySpanFrom(const FrameBuffer& src, int y, int x0, int x1) {

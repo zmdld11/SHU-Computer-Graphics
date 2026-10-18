@@ -81,6 +81,7 @@ Canvas::Canvas(int width, int height, LoaderFn loader) {
         std::cerr << "[Canvas] program link failed: " << log << std::endl;
         return;
     }
+    texUniform_ = glGetUniformLocation(program_, "uTex"); // 每帧不再做字符串查找
 
     // ② 准备"铺满窗口的大矩形"的顶点数据：两个三角形拼成一个矩形。
     // 每行 4 个数 = (x, y, u, v)：x/y 是屏幕位置（-1..1），u/v 是贴图上的取色位置（0..1）
@@ -151,10 +152,10 @@ void Canvas::present(const FrameBuffer& fb) {
     glViewport(0, 0, fb.width(), fb.height()); // 输出区域 = 整个窗口
     glClear(GL_COLOR_BUFFER_BIT);              // 擦掉上一帧
     glUseProgram(program_);                    // 启用我们的画图流水线
-    glActiveTexture(GL_TEXTURE0);              // 选定 0 号贴图槽
-    glBindTexture(GL_TEXTURE_2D, texture_);    // 把贴图放进这个槽
-    glUniform1i(glGetUniformLocation(program_, "uTex"),
-                0); // 告诉流水线：着色器里的 uTex 就用 0 号槽
+    glActiveTexture(GL_TEXTURE0);              // 选定 0 号贴图槽（贴图在上面上传时已绑定）
+    if (texUniform_ >= 0) {
+        glUniform1i(texUniform_, 0); // 告诉流水线：着色器里的 uTex 就用 0 号槽
+    }
     glBindVertexArray(vao_);                   // 使用 ② 里配好的矩形顶点
     //?//
     glDrawArrays(GL_TRIANGLES, 0, 6);          // 画 6 个顶点 = 2 个三角形 = 整块矩形

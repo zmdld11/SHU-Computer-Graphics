@@ -28,9 +28,10 @@ public:
     void present(const FrameBuffer& fb);
 
 private:
-    unsigned program_ = 0; // GPU 着色器程序（一条"怎么画"的流水线）
-    unsigned texture_ = 0; // 贴图：GPU 显存里的"画板副本"
-    unsigned vao_ = 0;     // 顶点数组对象：记住"铺满窗口的矩形"的顶点配置
+    unsigned program_ = 0;      // GPU 着色器程序（一条"怎么画"的流水线）
+    unsigned texture_ = 0;      // 贴图：GPU 显存里的"画板副本"
+    unsigned vao_ = 0;          // 顶点数组对象：记住"铺满窗口的矩形"的顶点配置
+    int texUniform_ = -1;       // uTex 的 uniform 位置，链接后查一次即可
     bool valid_ = false;
 };
 

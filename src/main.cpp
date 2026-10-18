@@ -300,8 +300,8 @@ int main(int argc, char** argv) {
     while (!window.shouldClose()) {
         // 1. 画出这一帧所有的像素
         ctrl.render(live);
-        // 2. 标题栏显示当前模式提示（只在内容变化时改窗口标题，避免每帧走窗口消息）
-        std::string t = ctrl.title();
+        // 2. 标题栏显示当前模式提示（title() 返回缓存引用；只在内容变化时改窗口标题）
+        const std::string& t = ctrl.title();
         if (t != lastTitle) {
             window.setTitle(t);
             lastTitle = t;

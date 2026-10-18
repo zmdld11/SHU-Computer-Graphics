@@ -53,6 +53,10 @@ public:
     // 填充闭区间矩形 [x0,x1]×[y0,y1]（自动夹到画布内）；裁剪掩码与任务栏底色用
     void fillRect(int x0, int y0, int x1, int y1, const Color& color);
 
+    // 填充第 y 行闭区间 [x0,x1]（自动夹边界）。扫描线填充/种子填充按 span 落色，
+    // 每次只需打包一次颜色，省掉逐像素的边界判断与 RGBA 打包。
+    void fillSpan(int y, int x0, int x1, const Color& color);
+
     // 把 src 第 y 行的 [x0,x1] 整段拷贝到本画布同一行（闭区间，自动夹边界）。
     // 裁剪常驻显示层用它替代逐像素 pixel()+putPixel()。
     void copySpanFrom(const FrameBuffer& src, int y, int x0, int x1);

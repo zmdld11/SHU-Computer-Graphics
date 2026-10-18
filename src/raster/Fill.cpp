@@ -77,9 +77,7 @@ void scanlineFillPolygon(FrameBuffer& fb, const std::vector<IPoint>& polygon,
             const int xStart = std::max(0, static_cast<int>(std::ceil(aet[i].x)));
             const int xEnd =
                 std::min(fb.width() - 1, static_cast<int>(std::floor(aet[i + 1].x)));
-            for (int x = xStart; x <= xEnd; ++x) {
-                fb.putPixel(x, y, color);
-            }
+            fb.fillSpan(y, xStart, xEnd, color);
         }
 
         for (auto& e : aet) {
@@ -116,9 +114,7 @@ void scanlineSeedFill(FrameBuffer& fb, IPoint seed, const Color& fillColor) {
         while (xr + 1 < fb.width() && fb.pixel(xr + 1, p.y) == target) {
             ++xr;
         }
-        for (int x = xl; x <= xr; ++x) {
-            fb.putPixel(x, p.y, fillColor);
-        }
+        fb.fillSpan(p.y, xl, xr, fillColor);
 
         // 2) 在上下相邻两行的同一区间内找"新的同色像素段"，每段取代表像素入栈
         for (int dy = -1; dy <= 1; dy += 2) {

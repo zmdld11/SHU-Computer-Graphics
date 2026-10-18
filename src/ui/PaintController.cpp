@@ -24,11 +24,13 @@ constexpr const char* kPaletteNames[6] = {"黄", "青", "品红", "绿", "橙", 
 const Color kPalette[6] = {Color::Yellow(), Color::Cyan(),  Color::Magenta(),
                            Color::Green(),  Color::Orange(), Color::Red()};
 
-float dist(IPoint a, IPoint b) {
-    const int dx = a.x - b.x;
-    const int dy = a.y - b.y;
-    return std::sqrt(static_cast<float>(dx * dx + dy * dy));
+float distSq(IPoint a, IPoint b) {
+    const float dx = static_cast<float>(a.x) - static_cast<float>(b.x);
+    const float dy = static_cast<float>(a.y) - static_cast<float>(b.y);
+    return dx * dx + dy * dy;
 }
+
+float dist(IPoint a, IPoint b) { return std::sqrt(distSq(a, b)); }
 
 // 屏幕坐标角度（度，[0,360)，y 向下 → 顺时针为正）——与 raster::drawArc 约定一致
 float angleOf(IPoint p, IPoint c) {
@@ -111,18 +113,39 @@ bool degInRange(float deg, float start, float end) {
     return span <= 0.0f || normDeg(deg - start) <= span;
 }
 
-// 点到线段的最短距离
-float distToSegment(IPoint p, IPoint a, IPoint b) {
-    const float abx = static_cast<float>(b.x - a.x);
-    const float aby = static_cast<float>(b.y - a.y);
-    const float apx = static_cast<float>(p.x - a.x);
-    const float apy = static_cast<float>(p.y - a.y);
+// 点到线段的最近点（返回距离与投影点；切向由调用方用边向量算，避免多余的 sqrt）
+struct SegmentProjection {
+    float dist = 0.0f;
+    FPoint point{};
+};
+
+SegmentProjection projectOnSegment(IPoint p, FPoint a, FPoint b) {
+    const float abx = b.x - a.x;
+    const float aby = b.y - a.y;
+    const float apx = static_cast<float>(p.x) - a.x;
+    const float apy = static_cast<float>(p.y) - a.y;
     const float ab2 = abx * abx + aby * aby;
     float t = ab2 > 0.0f ? (apx * abx + apy * aby) / ab2 : 0.0f;
-    t = t < 0.0f ? 0.0f : (t > 1.0f ? 1.0f : t);
+    t = std::clamp(t, 0.0f, 1.0f);
     const float cx = abx * t - apx;
     const float cy = aby * t - apy;
-    return std::sqrt(cx * cx + cy * cy);
+    return {std::sqrt(cx * cx + cy * cy), {a.x + abx * t, a.y + aby * t}};
+}
+
+float distToSegment(IPoint p, IPoint a, IPoint b) {
+    return projectOnSegment(p, toF(a), toF(b)).dist;
+}
+
+// 顶点/控制点的平均位置（课程口径的重心：多边形=顶点平均，曲线=控制点平均）
+template <typename Pt>
+FPoint averageOf(const std::vector<Pt>& pts) {
+    FPoint sum{0.0f, 0.0f};
+    for (const auto& p : pts) {
+        sum.x += static_cast<float>(p.x);
+        sum.y += static_cast<float>(p.y);
+    }
+    const float n = static_cast<float>(pts.size());
+    return {sum.x / n, sum.y / n};
 }
 
 // 偶奇规则点在多边形内（选中判定用）
@@ -185,37 +208,61 @@ bool PaintController::clipLine(IPoint& a, IPoint& b) const {
         return (clipAlgoIdx_ == 1) ? raster::midpointSplit(a, b, clipWin_.rect)
                                    : raster::cohenSutherland(a, b, clipWin_.rect);
     }
-    FPoint fa{static_cast<float>(a.x), static_cast<float>(a.y)};
-    FPoint fb{static_cast<float>(b.x), static_cast<float>(b.y)};
+    FPoint fa = toF(a);
+    FPoint fb = toF(b);
     if (!raster::cyrusBeck(fa, fb, clipWin_.poly)) {
         return false;
     }
-    a = {static_cast<int>(std::lround(fa.x)), static_cast<int>(std::lround(fa.y))};
-    b = {static_cast<int>(std::lround(fb.x)), static_cast<int>(std::lround(fb.y))};
+    a = roundPt(fa);
+    b = roundPt(fb);
     return true;
+}
+
+// 图形轮廓重描：线/圆/弧/多边形边/曲线采样折线共用，选中高亮直接复用它。
+void PaintController::drawOutline(FrameBuffer& fb, const Shape& s, const Color& c,
+                                  const raster::LineStyle& ls) const {
+    switch (s.mode) {
+    case Mode::Line:
+        raster::drawLine(fb, s.a, s.b, c, ls);
+        break;
+    case Mode::Circle:
+        raster::drawCircle(fb, s.a, s.radius, c, ls);
+        break;
+    case Mode::Arc:
+        raster::drawArc(fb, s.a, s.radius, s.startDeg, s.endDeg, c, ls);
+        break;
+    case Mode::Polygon: {
+        const std::size_t n = s.polygon.size();
+        for (std::size_t i = 0; n >= 2 && i < n; ++i) {
+            raster::drawLine(fb, s.polygon[i], s.polygon[(i + 1) % n], c, ls);
+        }
+        break;
+    }
+    case Mode::Curve: {
+        const std::vector<FPoint> samples = curveSamples(s);
+        for (std::size_t i = 0; i + 1 < samples.size(); ++i) {
+            raster::drawLine(fb, roundPt(samples[i]), roundPt(samples[i + 1]), c, ls);
+        }
+        break;
+    }
+    default:
+        break;
+    }
 }
 
 void PaintController::drawShape(FrameBuffer& fb, const Shape& s) const {
     switch (s.mode) {
     case Mode::Line:
-        raster::drawLine(fb, s.a, s.b, s.color, s.style);
-        break;
     case Mode::Circle:
-        raster::drawCircle(fb, s.a, s.radius, s.color, s.style);
-        break;
     case Mode::Arc:
-        raster::drawArc(fb, s.a, s.radius, s.startDeg, s.endDeg, s.color, s.style);
+        drawOutline(fb, s, s.color, s.style);
         break;
     case Mode::Polygon:
         if (s.filled) {
             raster::scanlineFillPolygon(fb, s.polygon, s.color);
         }
-        for (std::size_t i = 0; i < s.polygon.size(); ++i) {
-            // 填充多边形用实线描边；仅轮廓多边形沿用当前线型（虚线可看顶点接缝）
-            const raster::LineStyle ls = s.filled ? raster::LineStyle{} : s.style;
-            raster::drawLine(fb, s.polygon[i], s.polygon[(i + 1) % s.polygon.size()], s.color,
-                             ls);
-        }
+        // 填充多边形用实线描边；仅轮廓多边形沿用当前线型（虚线可看顶点接缝）
+        drawOutline(fb, s, s.color, s.filled ? raster::LineStyle{} : s.style);
         break;
     case Mode::SeedFill:
         raster::scanlineSeedFill(fb, s.a, s.color);
@@ -230,14 +277,9 @@ void PaintController::drawShape(FrameBuffer& fb, const Shape& s) const {
         }
         break;
     }
-    case Mode::Curve: {
-        // 曲线 = 采样折线逐段落像素，沿用线型/线宽属性
-        const std::vector<FPoint> samples = curveSamples(s);
-        for (std::size_t i = 0; i + 1 < samples.size(); ++i) {
-            raster::drawLine(fb, roundPt(samples[i]), roundPt(samples[i + 1]), s.color, s.style);
-        }
+    case Mode::Curve:
+        drawOutline(fb, s, s.color, s.style);
         break;
-    }
     case Mode::Transform:
         break; // 变换模式没有"图形"本体（选中/参考点标记画在预览层）
     }
@@ -455,15 +497,7 @@ void PaintController::drawPreview(FrameBuffer& fb) const {
     // 变换模式标记：选中=橙色高亮+虚线外接矩形+控制柄；青=当前参考点，黄=等待指定的参考点，橙=A 的对接点
     if (mode_ == Mode::Transform) {
         if (bandSelect_) { // 框选橡皮筋（品红虚线）
-            const raster::Rect band = rectFrom(bandStart_, curr_);
-            raster::drawLine(fb, {band.xmin, band.ymin}, {band.xmax, band.ymin}, Color::Magenta(),
-                             {0xF0F0u, 1});
-            raster::drawLine(fb, {band.xmax, band.ymin}, {band.xmax, band.ymax}, Color::Magenta(),
-                             {0xF0F0u, 1});
-            raster::drawLine(fb, {band.xmax, band.ymax}, {band.xmin, band.ymax}, Color::Magenta(),
-                             {0xF0F0u, 1});
-            raster::drawLine(fb, {band.xmin, band.ymax}, {band.xmin, band.ymin}, Color::Magenta(),
-                             {0xF0F0u, 1});
+            drawRectOutline(fb, rectFrom(bandStart_, curr_), Color::Magenta(), {0xF0F0u, 1});
         }
         drawSelection(fb); // 画板式选择：高亮重描 + 外接矩形 + 控制柄（替代旧的重心十字）
         if (!selected_.empty()) {
@@ -502,6 +536,7 @@ void PaintController::render(FrameBuffer& fb) {
 }
 
 void PaintController::onKey(int key, int action, int mods) {
+    titleDirty_ = true; // 标题只可能在输入事件后变化，主循环其余帧读缓存
     shiftHeld_ = (mods & GLFW_MOD_SHIFT) != 0; // 任意事件都刷新修饰键状态（拖拽中按下也生效）
     ctrlHeld_ = (mods & GLFW_MOD_CONTROL) != 0;
     if (action != GLFW_PRESS && action != GLFW_REPEAT) {
@@ -547,49 +582,24 @@ void PaintController::onKey(int key, int action, int mods) {
     }
 }
 
+void PaintController::switchMode(Mode m) {
+    mode_ = m;
+    cancelInProgress();
+    titleDirty_ = true;
+    markDirty();
+}
+
 // 键盘与任务栏按钮的统一操作入口：所有交互动作的真正实现
 void PaintController::handleAction(Act a) {
     switch (a) {
-    case Act::ModeLine:
-        mode_ = Mode::Line;
-        cancelInProgress();
-        markDirty();
-        break;
-    case Act::ModeCircle:
-        mode_ = Mode::Circle;
-        cancelInProgress();
-        markDirty();
-        break;
-    case Act::ModeArc:
-        mode_ = Mode::Arc;
-        cancelInProgress();
-        markDirty();
-        break;
-    case Act::ModePolygon:
-        mode_ = Mode::Polygon;
-        cancelInProgress();
-        markDirty();
-        break;
-    case Act::ModeSeed:
-        mode_ = Mode::SeedFill;
-        cancelInProgress();
-        markDirty();
-        break;
-    case Act::ModeClip:
-        mode_ = Mode::Clip;
-        cancelInProgress();
-        markDirty();
-        break;
-    case Act::ModeXform:
-        mode_ = Mode::Transform;
-        cancelInProgress();
-        markDirty();
-        break;
-    case Act::ModeCurve:
-        mode_ = Mode::Curve;
-        cancelInProgress();
-        markDirty();
-        break;
+    case Act::ModeLine: switchMode(Mode::Line); break;
+    case Act::ModeCircle: switchMode(Mode::Circle); break;
+    case Act::ModeArc: switchMode(Mode::Arc); break;
+    case Act::ModePolygon: switchMode(Mode::Polygon); break;
+    case Act::ModeSeed: switchMode(Mode::SeedFill); break;
+    case Act::ModeClip: switchMode(Mode::Clip); break;
+    case Act::ModeXform: switchMode(Mode::Transform); break;
+    case Act::ModeCurve: switchMode(Mode::Curve); break;
     case Act::CurveType:
         if (mode_ == Mode::Curve) {
             curveBSpline_ = !curveBSpline_; // 切换"新曲线"的类型，已提交曲线不受影响
@@ -817,28 +827,50 @@ void PaintController::buildToolbar(std::vector<ToolButton>& btns) const {
     }
 }
 
-void PaintController::drawToolbar(FrameBuffer& fb) const {
+// 影响任务栏布局/文字/高亮的状态指纹；指纹不变时直接复用缓存帧
+std::uint64_t PaintController::toolbarKey(int width) const {
+    std::uint64_t k = static_cast<std::uint64_t>(width) << 32;
+    k |= static_cast<std::uint64_t>(mode_);
+    k |= static_cast<std::uint64_t>(polygonFilled_) << 4;
+    k |= static_cast<std::uint64_t>(clipWin_.valid) << 5;
+    k |= static_cast<std::uint64_t>(clipOn_) << 6;
+    k |= static_cast<std::uint64_t>(curveBSpline_) << 7;
+    k |= static_cast<std::uint64_t>(refManual_) << 8;
+    k |= static_cast<std::uint64_t>(dockStage_ > 0) << 9;
+    return k;
+}
+
+void PaintController::renderToolbar(FrameBuffer& fb,
+                                    const std::vector<ToolButton>& btns) const {
     const Color kBg(34, 34, 40);
     const Color kFace(58, 58, 70);
     const Color kActive(70, 110, 180);
     const Color kBorder(120, 120, 130);
-    const int tbH = toolbarHeight();
-    fb.fillRect(0, 0, fb.width() - 1, tbH - 1, kBg);
-    std::vector<ToolButton> btns;
-    buildToolbar(btns);
+    fb.fillRect(0, 0, fb.width() - 1, fb.height() - 1, kBg);
     for (const auto& b : btns) {
         fb.fillRect(b.x, b.y, b.x + b.w - 1, b.y + b.h - 1, b.active ? kActive : kFace);
-        for (int x = b.x; x < b.x + b.w; ++x) { // 1px 边框
-            fb.putPixel(x, b.y, kBorder);
-            fb.putPixel(x, b.y + b.h - 1, kBorder);
-        }
-        for (int y = b.y; y < b.y + b.h; ++y) {
-            fb.putPixel(b.x, y, kBorder);
-            fb.putPixel(b.x + b.w - 1, y, kBorder);
-        }
+        fb.fillRect(b.x, b.y, b.x + b.w - 1, b.y, kBorder); // 1px 边框
+        fb.fillRect(b.x, b.y + b.h - 1, b.x + b.w - 1, b.y + b.h - 1, kBorder);
+        fb.fillRect(b.x, b.y, b.x, b.y + b.h - 1, kBorder);
+        fb.fillRect(b.x + b.w - 1, b.y, b.x + b.w - 1, b.y + b.h - 1, kBorder);
         const int tx = b.x + (b.w - text::textWidth(b.label.c_str())) / 2 + 1;
         const int ty = b.y + (b.h - text::height()) / 2;
         text::drawText(fb, tx, ty, b.label.c_str(), Color(230, 230, 235));
+    }
+}
+
+void PaintController::drawToolbar(FrameBuffer& fb) const {
+    const int tbH = toolbarHeight();
+    const std::uint64_t key = toolbarKey(fb.width());
+    if (!toolbarCache_ || toolbarCache_->width() != fb.width() ||
+        toolbarCache_->height() != tbH || toolbarCacheKey_ != key) {
+        toolbarCache_ = std::make_unique<FrameBuffer>(fb.width(), tbH);
+        buildToolbar(toolbarLayout_);
+        renderToolbar(*toolbarCache_, toolbarLayout_);
+        toolbarCacheKey_ = key;
+    }
+    for (int y = 0; y < tbH; ++y) { // 命中缓存：逐行整段上屏，不再排字
+        fb.copySpanFrom(*toolbarCache_, y, 0, fb.width() - 1);
     }
 }
 
@@ -853,8 +885,7 @@ bool PaintController::toolbarPress(IPoint p) {
     buildToolbar(btns);
     for (const auto& b : btns) {
         if (p.x >= b.x && p.x < b.x + b.w && p.y >= b.y && p.y < b.y + b.h) {
-            handleAction(b.act);
-            markDirty(); // 高亮/标签可能变化（如当前模式按钮）
+            handleAction(b.act); // 内容变更由 handleAction 决定是否标脏
             return true;
         }
     }
@@ -959,31 +990,10 @@ FPoint PaintController::shapeCentroid(const Shape& s) const {
     switch (s.mode) {
     case Mode::Line:
         return {(s.a.x + s.b.x) * 0.5f, (s.a.y + s.b.y) * 0.5f};
-    case Mode::Polygon: {
-        if (s.polygon.empty()) {
-            return toF(s.a);
-        }
-        FPoint sum{0.0f, 0.0f};
-        for (const auto& p : s.polygon) {
-            sum.x += static_cast<float>(p.x);
-            sum.y += static_cast<float>(p.y);
-        }
-        const float n = static_cast<float>(s.polygon.size());
-        return {sum.x / n, sum.y / n}; // 课程口径：顶点平均（非面积重心）
-    }
-    case Mode::Curve: {
-        // 与多边形同口径：控制点平均
-        if (s.curve.empty()) {
-            return toF(s.a);
-        }
-        FPoint sum{0.0f, 0.0f};
-        for (const auto& p : s.curve) {
-            sum.x += p.x;
-            sum.y += p.y;
-        }
-        const float n = static_cast<float>(s.curve.size());
-        return {sum.x / n, sum.y / n};
-    }
+    case Mode::Polygon: // 课程口径：顶点平均（非面积重心）
+        return s.polygon.empty() ? toF(s.a) : averageOf(s.polygon);
+    case Mode::Curve: // 与多边形同口径：控制点平均
+        return s.curve.empty() ? toF(s.a) : averageOf(s.curve);
     case Mode::Circle:
     case Mode::Arc:
     default:
@@ -1024,17 +1034,23 @@ void PaintController::transformSelected(const geom::Mat3& m, float rotDeg, float
     markDirty();
 }
 
-// 开始整体拖拽：记录按下点（绝对式偏移的锚）并快照当前选中集合。
-// 控制柄拖拽和外接矩形拖拽都从这里进入，保证 selSnapshot_ 与 selected_ 同序。
-void PaintController::beginXformDrag(IPoint anchor) {
-    xformDrag_ = true;
-    lastDrag_ = anchor;
+// 选中图形参数快照：拖拽期间每帧从这份快照重算，避免整数参数逐帧舍入累积漂移。
+void PaintController::snapshotSelection() {
     selSnapshot_.clear();
+    selSnapshot_.reserve(selected_.size());
     for (int idx : selected_) {
         if (idx >= 0 && idx < static_cast<int>(shapes_.size())) {
             selSnapshot_.push_back(shapes_[idx]);
         }
     }
+}
+
+// 开始整体拖拽：记录按下点（绝对式偏移的锚）并快照当前选中集合。
+// 控制柄拖拽和外接矩形拖拽都从这里进入，保证 selSnapshot_ 与 selected_ 同序。
+void PaintController::beginXformDrag(IPoint anchor) {
+    xformDrag_ = true;
+    lastDrag_ = anchor;
+    snapshotSelection();
     snapshotAttachedSeeds();
 }
 
@@ -1049,7 +1065,8 @@ void PaintController::addShape(Shape s) {
 std::uint64_t PaintController::findSeedParent(IPoint p) const {
     for (int i = static_cast<int>(shapes_.size()) - 1; i >= 0; --i) {
         const Shape& s = shapes_[i];
-        if (s.mode == Mode::Circle && dist(p, s.a) <= static_cast<float>(s.radius)) {
+        if (s.mode == Mode::Circle &&
+            distSq(p, s.a) <= static_cast<float>(s.radius) * static_cast<float>(s.radius)) {
             return s.id;
         }
         if (s.mode == Mode::Polygon && pointInPolygon(p, s.polygon)) {
@@ -1207,13 +1224,14 @@ int PaintController::hitShape(IPoint p) const {
                 return i;
             }
             break;
-        case Mode::Circle:
-            // 圆环 5px 容差，或圆内任意位置：填充圆不必非得抓那一圈细线
-            if (std::fabs(dist(p, s.a) - s.radius) <= kHitTol ||
-                dist(p, s.a) <= static_cast<float>(s.radius)) {
+        case Mode::Circle: {
+            // 圆内任意位置，或圆环向外 5px：合并为"到圆心 <= r + 5"，省掉 sqrt/fabs
+            const float reach = static_cast<float>(s.radius) + kHitTol;
+            if (distSq(p, s.a) <= reach * reach) {
                 return i;
             }
             break;
+        }
         case Mode::Arc:
             if (std::fabs(dist(p, s.a) - s.radius) <= kHitTol &&
                 degInRange(angleOf(p, s.a), s.startDeg, s.endDeg)) {
@@ -1337,18 +1355,13 @@ int PaintController::pickOutlineShape(IPoint p, FPoint& outPt, FPoint& outTan, i
         }
         switch (s.mode) {
         case Mode::Line: {
-            if (distToSegment(p, s.a, s.b) > kSnapTol) {
+            const SegmentProjection pr = projectOnSegment(p, toF(s.a), toF(s.b));
+            if (pr.dist > kSnapTol) {
                 break;
             }
-            const float abx = static_cast<float>(s.b.x - s.a.x);
-            const float aby = static_cast<float>(s.b.y - s.a.y);
-            const float apx = static_cast<float>(p.x - s.a.x);
-            const float apy = static_cast<float>(p.y - s.a.y);
-            const float ab2 = abx * abx + aby * aby;
-            float t = ab2 > 0.0f ? (apx * abx + apy * aby) / ab2 : 0.0f;
-            t = t < 0.0f ? 0.0f : (t > 1.0f ? 1.0f : t);
-            outPt = {s.a.x + abx * t, s.a.y + aby * t};
-            outTan = unitVec({abx, aby});
+            outPt = pr.point;
+            outTan = unitVec({static_cast<float>(s.b.x) - static_cast<float>(s.a.x),
+                              static_cast<float>(s.b.y) - static_cast<float>(s.a.y)});
             return i;
         }
         case Mode::Circle: {
@@ -1386,18 +1399,12 @@ int PaintController::pickOutlineShape(IPoint p, FPoint& outPt, FPoint& outTan, i
             for (int k = 0; k < n; ++k) {
                 const IPoint& p1 = s.polygon[k];
                 const IPoint& p2 = s.polygon[(k + 1) % n];
-                const float dd = distToSegment(p, p1, p2);
-                if (dd < best) {
-                    best = dd;
-                    const float abx = static_cast<float>(p2.x - p1.x);
-                    const float aby = static_cast<float>(p2.y - p1.y);
-                    const float apx = static_cast<float>(p.x - p1.x);
-                    const float apy = static_cast<float>(p.y - p1.y);
-                    const float ab2 = abx * abx + aby * aby;
-                    float t = ab2 > 0.0f ? (apx * abx + apy * aby) / ab2 : 0.0f;
-                    t = t < 0.0f ? 0.0f : (t > 1.0f ? 1.0f : t);
-                    bestPt = {p1.x + abx * t, p1.y + aby * t};
-                    bestTan = unitVec({abx, aby});
+                const SegmentProjection pr = projectOnSegment(p, toF(p1), toF(p2));
+                if (pr.dist < best) {
+                    best = pr.dist;
+                    bestPt = pr.point;
+                    bestTan = unitVec({static_cast<float>(p2.x) - static_cast<float>(p1.x),
+                                       static_cast<float>(p2.y) - static_cast<float>(p1.y)});
                 }
             }
             if (best <= kSnapTol) {
@@ -1415,18 +1422,11 @@ int PaintController::pickOutlineShape(IPoint p, FPoint& outPt, FPoint& outTan, i
             for (std::size_t k = 0; k + 1 < samples.size(); ++k) {
                 const FPoint& q1 = samples[k];
                 const FPoint& q2 = samples[k + 1];
-                const float dd = distToSegment(p, roundPt(q1), roundPt(q2));
-                if (dd < best) {
-                    best = dd;
-                    const float abx = q2.x - q1.x;
-                    const float aby = q2.y - q1.y;
-                    const float apx = static_cast<float>(p.x) - q1.x;
-                    const float apy = static_cast<float>(p.y) - q1.y;
-                    const float ab2 = abx * abx + aby * aby;
-                    float t = ab2 > 0.0f ? (apx * abx + apy * aby) / ab2 : 0.0f;
-                    t = t < 0.0f ? 0.0f : (t > 1.0f ? 1.0f : t);
-                    bestPt = {q1.x + abx * t, q1.y + aby * t};
-                    bestTan = unitVec({abx, aby});
+                const SegmentProjection pr = projectOnSegment(p, q1, q2);
+                if (pr.dist < best) {
+                    best = pr.dist;
+                    bestPt = pr.point;
+                    bestTan = unitVec({q2.x - q1.x, q2.y - q1.y});
                 }
             }
             if (best <= kSnapTol) {
@@ -1453,21 +1453,29 @@ raster::Rect PaintController::shapeBounds(const Shape& s) const {
     case Mode::Circle:
         return {s.a.x - s.radius, s.a.y - s.radius, s.a.x + s.radius, s.a.y + s.radius};
     case Mode::Arc: {
-        // 沿弧采样取范围（含两端点；步长 5° 足以覆盖轴向极值）
         const float span = normDeg(s.endDeg - s.startDeg);
         if (span <= 0.0f) { // 整圆
             return {s.a.x - s.radius, s.a.y - s.radius, s.a.x + s.radius, s.a.y + s.radius};
         }
-        raster::Rect r{s.a.x, s.a.y, s.a.x, s.a.y};
-        const int steps = std::max(2, static_cast<int>(span / 5.0f) + 1);
-        for (int k = 0; k <= steps; ++k) {
-            const float rad = normDeg(s.startDeg + span * k / steps) * kPiF / 180.0f;
-            const int x = s.a.x + static_cast<int>(std::lround(s.radius * std::cos(rad)));
-            const int y = s.a.y + static_cast<int>(std::lround(s.radius * std::sin(rad)));
-            r.xmin = std::min(r.xmin, x);
-            r.ymin = std::min(r.ymin, y);
-            r.xmax = std::max(r.xmax, x);
-            r.ymax = std::max(r.ymax, y);
+        const auto pointAt = [&](float deg) {
+            const float rad = deg * kPiF / 180.0f;
+            return IPoint{s.a.x + static_cast<int>(std::lround(s.radius * std::cos(rad))),
+                          s.a.y + static_cast<int>(std::lround(s.radius * std::sin(rad)))};
+        };
+        const IPoint first = pointAt(s.startDeg);
+        raster::Rect r{first.x, first.y, first.x, first.y};
+        const auto include = [&](IPoint p) {
+            r.xmin = std::min(r.xmin, p.x);
+            r.ymin = std::min(r.ymin, p.y);
+            r.xmax = std::max(r.xmax, p.x);
+            r.ymax = std::max(r.ymax, p.y);
+        };
+        include(pointAt(s.endDeg));
+        // 圆的轴向极值只可能出现在 0/90/180/270；落在弧段内的才纳入包围盒
+        for (const float deg : {0.0f, 90.0f, 180.0f, 270.0f}) {
+            if (degInRange(deg, s.startDeg, s.endDeg)) {
+                include(pointAt(deg));
+            }
         }
         return r;
     }
@@ -1616,36 +1624,8 @@ void PaintController::drawSelection(FrameBuffer& fb) const {
     const Color hi(255, 150, 40);
     const raster::LineStyle hiStyle{0xFFFFu, 3}; // 实线加粗，虚线图形也能看清选中态
     for (int idx : selected_) {
-        if (idx < 0 || idx >= static_cast<int>(shapes_.size())) {
-            continue;
-        }
-        const Shape& s = shapes_[idx];
-        switch (s.mode) {
-        case Mode::Line:
-            raster::drawLine(fb, s.a, s.b, hi, hiStyle);
-            break;
-        case Mode::Circle:
-            raster::drawCircle(fb, s.a, s.radius, hi, hiStyle);
-            break;
-        case Mode::Arc:
-            raster::drawArc(fb, s.a, s.radius, s.startDeg, s.endDeg, hi, hiStyle);
-            break;
-        case Mode::Polygon: {
-            const std::size_t n = s.polygon.size();
-            for (std::size_t k = 0; n >= 2 && k < n; ++k) {
-                raster::drawLine(fb, s.polygon[k], s.polygon[(k + 1) % n], hi, hiStyle);
-            }
-            break;
-        }
-        case Mode::Curve: {
-            const std::vector<FPoint> samples = curveSamples(s);
-            for (std::size_t k = 0; k + 1 < samples.size(); ++k) {
-                raster::drawLine(fb, roundPt(samples[k]), roundPt(samples[k + 1]), hi, hiStyle);
-            }
-            break;
-        }
-        default:
-            break;
+        if (idx >= 0 && idx < static_cast<int>(shapes_.size())) {
+            drawOutline(fb, shapes_[idx], hi, hiStyle);
         }
     }
     // 2) 控制柄与外接矩形
@@ -1776,6 +1756,7 @@ void PaintController::cancelInProgress() {
 }
 
 void PaintController::onMouseButton(int button, int action, int mods) {
+    titleDirty_ = true;
     const bool press = (action == GLFW_PRESS);
     shiftHeld_ = (mods & GLFW_MOD_SHIFT) != 0; // 鼠标事件刷新修饰键状态
     ctrlHeld_ = (mods & GLFW_MOD_CONTROL) != 0;
@@ -1957,11 +1938,10 @@ void PaintController::onMouseButton(int button, int action, int mods) {
                 }
                 break;
             }
-            // 指定参考点：本次点击只设定参考点，不动选中
+            // 指定参考点：本次点击只设定参考点，不动选中（预览层每帧重画，无需重放提交层）
             if (refPick_) {
                 refPoint_ = curr_;
                 refPick_ = false;
-                markDirty();
                 break;
             }
             // 画板式编辑：控制柄优先于图形命中（同曲线模式控制点先例）
@@ -1983,10 +1963,7 @@ void PaintController::onMouseButton(int button, int action, int mods) {
                             : -1;
                     if (handleShapeIdx_ < 0) { // bbox 柄：记录初始外接矩形 + 选中图形快照
                         selBounds0_ = selectionBounds();
-                        selSnapshot_.clear();
-                        for (int idx : selected_) {
-                            selSnapshot_.push_back(shapes_[idx]);
-                        }
+                        snapshotSelection();
                         snapshotAttachedSeeds();
                     }
                     break;
@@ -2006,12 +1983,10 @@ void PaintController::onMouseButton(int button, int action, int mods) {
                         selected_.push_back(hit);
                     }
                     sel = !sel;
-                    markDirty();
                 } else if (!sel) { // 普通点击：只选它一个
                     selected_.clear();
                     selected_.push_back(hit);
                     sel = true;
-                    markDirty();
                 }
                 if (sel) { // 在选中集合里才可拖拽平移
                     beginXformDrag(curr_);
@@ -2056,10 +2031,8 @@ void PaintController::onMouseButton(int button, int action, int mods) {
                             selected_.push_back(i);
                         }
                     }
-                    markDirty();
                 } else if (!selected_.empty()) { // 原地微点：清除选中
                     selected_.clear();
-                    markDirty();
                 }
             }
         }
@@ -2078,8 +2051,7 @@ void PaintController::onMouseButton(int button, int action, int mods) {
                 }
             }
             if (!curveDrag_) {
-                pendingCurve_.push_back(curr_); // 左键连点加控制点，右键提交
-                markDirty();
+                pendingCurve_.push_back(curr_); // 左键连点加控制点，右键提交（预览层实时画）
             }
         } else if (curveDrag_) {
             curveDrag_ = false;
@@ -2129,8 +2101,13 @@ void PaintController::onMouseMove(IPoint pos, int mods) {
     curr_ = pos;
 }
 
-std::string PaintController::title() const {
-    std::string t =
+const std::string& PaintController::title() const {
+    if (!titleDirty_) {
+        return titleCache_;
+    }
+    titleCache_.clear();
+    std::string& t = titleCache_;
+    t +=
         "绘图引擎（实验一/二/三/四） | 1直线 2圆 3圆弧 4多边形 5种子填充 6裁剪 7变换 8曲线 | "
         "S线型 W线宽 X填充色 E清屏 右键取消 | ";
     t += kModeNames[static_cast<int>(mode_)];
@@ -2197,7 +2174,8 @@ std::string PaintController::title() const {
     if (clipOn_ && clipWin_.valid) {
         t += " | 裁剪:开（V 关，窗口外内容隐藏）";
     }
-    return t;
+    titleDirty_ = false;
+    return titleCache_;
 }
 
 } // namespace cg
