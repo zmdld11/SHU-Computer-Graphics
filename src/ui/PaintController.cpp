@@ -704,16 +704,31 @@ void PaintController::handleAction(Act a) {
         break;
     case Act::DeleteSel:
         if (mode_ == Mode::Transform && !selected_.empty()) {
-            // 从大到小删除，避免下标位移；删完清空选中
-            std::vector<int> ordered = selected_;
-            std::sort(ordered.rbegin(), ordered.rend());
-            for (int idx : ordered) {
+            std::vector<std::uint64_t> parentIds;
+            std::vector<int> toErase;
+            for (int idx : selected_) {
                 if (idx >= 0 && idx < static_cast<int>(shapes_.size())) {
-                    shapes_.erase(shapes_.begin() + idx);
+                    parentIds.push_back(shapes_[idx].id);
+                    toErase.push_back(idx);
                 }
+            }
+            // 删除父图形时，绑定在它上面的种子填充一起删掉，避免留下孤立色块
+            for (int i = 0; i < static_cast<int>(shapes_.size()); ++i) {
+                const Shape& s = shapes_[i];
+                if (s.mode == Mode::SeedFill && s.parentId != 0 &&
+                    std::find(parentIds.begin(), parentIds.end(), s.parentId) !=
+                        parentIds.end()) {
+                    toErase.push_back(i);
+                }
+            }
+            std::sort(toErase.begin(), toErase.end());
+            toErase.erase(std::unique(toErase.begin(), toErase.end()), toErase.end());
+            for (auto it = toErase.rbegin(); it != toErase.rend(); ++it) {
+                shapes_.erase(shapes_.begin() + *it);
             }
             selected_.clear();
             selSnapshot_.clear();
+            attachedSeedSnapshot_.clear();
             handleDrag_ = false;
             activeHandle_ = SelHandle::None;
             markDirty();
@@ -854,7 +869,7 @@ void PaintController::closePolygon() {
         s.filled = polygonFilled_;
         s.style = currentStyle();
         s.color = polygonFilled_ ? currentFillColor() : Color::White();
-        shapes_.push_back(s);
+        addShape(std::move(s));
         markDirty();
     }
     pendingPolygon_.clear();
@@ -885,7 +900,7 @@ void PaintController::commitCurve() {
         s.bspline = curveBSpline_;
         s.curveDeg = 3;
         s.style = currentStyle();
-        shapes_.push_back(s);
+        addShape(std::move(s));
         markDirty();
     }
     pendingCurve_.clear();
@@ -1005,6 +1020,7 @@ void PaintController::transformSelected(const geom::Mat3& m, float rotDeg, float
         }
         applyToShape(shapes_[idx], m, rotDeg, scaleF);
     }
+    transformAttachedSeedsForSelection(m, false); // 键盘变换：种子跟随所属图形
     markDirty();
 }
 
@@ -1019,6 +1035,130 @@ void PaintController::beginXformDrag(IPoint anchor) {
             selSnapshot_.push_back(shapes_[idx]);
         }
     }
+    snapshotAttachedSeeds();
+}
+
+// 图形入列表并分配稳定 id：种子填充用 parentId 指向所属圆/多边形，
+// 下标会随删除/重排变化，id 不会。
+void PaintController::addShape(Shape s) {
+    s.id = nextShapeId_++;
+    shapes_.push_back(std::move(s));
+}
+
+// 找包含点 p 的最上层闭合图形（圆内部 / 多边形内部）；没有则返回 0（自由种子）
+std::uint64_t PaintController::findSeedParent(IPoint p) const {
+    for (int i = static_cast<int>(shapes_.size()) - 1; i >= 0; --i) {
+        const Shape& s = shapes_[i];
+        if (s.mode == Mode::Circle && dist(p, s.a) <= static_cast<float>(s.radius)) {
+            return s.id;
+        }
+        if (s.mode == Mode::Polygon && pointInPolygon(p, s.polygon)) {
+            return s.id;
+        }
+    }
+    return 0;
+}
+
+// 拖拽开始时记录选中图形所绑定的种子点；拖拽期间每帧从这份快照重算，避免整数漂移
+void PaintController::snapshotAttachedSeeds() {
+    attachedSeedSnapshot_.clear();
+    auto selectedId = [&](std::uint64_t id) {
+        for (int idx : selected_) {
+            if (idx >= 0 && idx < static_cast<int>(shapes_.size()) && shapes_[idx].id == id) {
+                return true;
+            }
+        }
+        return false;
+    };
+    for (int i = 0; i < static_cast<int>(shapes_.size()); ++i) {
+        const Shape& s = shapes_[i];
+        if (s.mode == Mode::SeedFill && s.parentId != 0 && selectedId(s.parentId)) {
+            attachedSeedSnapshot_.push_back({i, s.a});
+        }
+    }
+}
+
+// 变换某个图形绑定的所有种子。useSnapshot=true 时从拖拽起点的种子快照用同一矩阵重算；
+// 键盘/对接等一次性变换直接作用于当前种子。
+void PaintController::transformSeedsOfParent(std::uint64_t parentId, const geom::Mat3& m,
+                                             bool useSnapshot) {
+    const Shape* parent = nullptr;
+    for (const auto& s : shapes_) {
+        if (s.id == parentId) {
+            parent = &s;
+            break;
+        }
+    }
+    if (parent == nullptr) {
+        return;
+    }
+    for (int i = 0; i < static_cast<int>(shapes_.size()); ++i) {
+        Shape& seed = shapes_[i];
+        if (seed.mode != Mode::SeedFill || seed.parentId != parentId) {
+            continue;
+        }
+        IPoint base = seed.a;
+        if (useSnapshot) {
+            for (const auto& snap : attachedSeedSnapshot_) {
+                if (snap.first == i) {
+                    base = snap.second;
+                    break;
+                }
+            }
+        }
+        seed.a = clampSeedToParent(roundPt(geom::apply(m, toF(base))), *parent);
+    }
+}
+
+void PaintController::transformAttachedSeedsForSelection(const geom::Mat3& m, bool useSnapshot) {
+    for (int idx : selected_) {
+        if (idx < 0 || idx >= static_cast<int>(shapes_.size())) {
+            continue;
+        }
+        transformSeedsOfParent(shapes_[idx].id, m, useSnapshot);
+    }
+}
+
+// 变换/取整后把种子钳回父图形内部。圆：向圆心投影到 radius-1；多边形：
+// 先看原位，落在外面就在 1~8px 邻域找最近内点，最后退回顶点平均（若它在内部）。
+IPoint PaintController::clampSeedToParent(IPoint seed, const Shape& parent) const {
+    if (parent.mode == Mode::Circle) {
+        if (parent.radius <= 1) {
+            return parent.a;
+        }
+        const float dx = static_cast<float>(seed.x - parent.a.x);
+        const float dy = static_cast<float>(seed.y - parent.a.y);
+        const float d = std::sqrt(dx * dx + dy * dy);
+        const float maxD = static_cast<float>(parent.radius - 1);
+        if (d > maxD && d > 1e-6f) {
+            return {parent.a.x + static_cast<int>(std::lround(dx / d * maxD)),
+                    parent.a.y + static_cast<int>(std::lround(dy / d * maxD))};
+        }
+        return seed;
+    }
+    if (parent.mode == Mode::Polygon) {
+        if (parent.polygon.size() < 3 || pointInPolygon(seed, parent.polygon)) {
+            return seed;
+        }
+        for (int r = 1; r <= 8; ++r) {
+            for (int dy = -r; dy <= r; ++dy) {
+                for (int dx = -r; dx <= r; ++dx) {
+                    if (std::abs(dx) != r && std::abs(dy) != r) {
+                        continue;
+                    }
+                    const IPoint q{seed.x + dx, seed.y + dy};
+                    if (pointInPolygon(q, parent.polygon)) {
+                        return q;
+                    }
+                }
+            }
+        }
+        const IPoint c = roundPt(shapeCentroid(parent));
+        if (pointInPolygon(c, parent.polygon)) {
+            return c;
+        }
+    }
+    return seed;
 }
 
 // 矩阵作用到图形参数；rotDeg/scaleF 是矩阵对应的旋转角/等比因子，
@@ -1607,6 +1747,7 @@ void PaintController::applyHandleDrag(IPoint pos) {
         shapes_[idx] = selSnapshot_[k];
         applyToShape(shapes_[idx], m, 0.0f, scaleF);
     }
+    transformAttachedSeedsForSelection(m, true); // 柄缩放：种子从拖拽起点快照同步
     markDirty();
 }
 
@@ -1627,6 +1768,7 @@ void PaintController::cancelInProgress() {
     activeHandle_ = SelHandle::None;
     handleShapeIdx_ = -1;
     selSnapshot_.clear();
+    attachedSeedSnapshot_.clear();
     selected_.clear();
     pendingPolygon_.clear();
     pendingClipWin_.clear();
@@ -1694,7 +1836,7 @@ void PaintController::onMouseButton(int button, int action, int mods) {
                 s.a = press_;
                 s.b = lineDragEnd(); // Shift：45° 方向吸附
                 s.style = currentStyle();
-                shapes_.push_back(s);
+                addShape(std::move(s));
                 markDirty();
             } else if (dist(press_, curr_) >= 1.0f) {
                 Shape s;
@@ -1702,7 +1844,7 @@ void PaintController::onMouseButton(int button, int action, int mods) {
                 s.a = press_;
                 s.radius = dragRadius(); // Ctrl：步进半径
                 s.style = currentStyle();
-                shapes_.push_back(s);
+                addShape(std::move(s));
                 markDirty();
             }
         }
@@ -1732,7 +1874,7 @@ void PaintController::onMouseButton(int button, int action, int mods) {
             s.startDeg = arcStart_;
             s.endDeg = angleOf(curr_, arcCenter_);
             s.style = currentStyle();
-            shapes_.push_back(s);
+            addShape(std::move(s));
             markDirty();
             arcAdjust_ = false;
         }
@@ -1749,8 +1891,10 @@ void PaintController::onMouseButton(int button, int action, int mods) {
             Shape s;
             s.mode = Mode::SeedFill;
             s.a = curr_; // 种子点
+            // 点在闭合图形内 → 绑定到它，图形变换时种子跟随；否则是自由种子填充
+            s.parentId = findSeedParent(curr_);
             s.color = currentFillColor();
-            shapes_.push_back(s);
+            addShape(std::move(s));
             markDirty();
         }
         break;
@@ -1776,7 +1920,7 @@ void PaintController::onMouseButton(int button, int action, int mods) {
             s.b = curr_;
             s.style = currentStyle();
             s.color = Color::Green();
-            shapes_.push_back(s);
+            addShape(std::move(s));
             markDirty();
         }
         break;
@@ -1806,6 +1950,7 @@ void PaintController::onMouseButton(int button, int action, int mods) {
                         geom::translate(dockA_.x - pt.x, dockA_.y - pt.y),
                         geom::rotateAbout(pt.x, pt.y, diff * kPiF / 180.0f));
                     applyToShape(shapes_[idx], m, diff, 1.0f);
+                    transformSeedsOfParent(shapes_[idx].id, m, false); // 对接时种子同步
                     dockStage_ = 0;
                     dockAShapeIdx_ = -1;
                     markDirty();
@@ -1842,6 +1987,7 @@ void PaintController::onMouseButton(int button, int action, int mods) {
                         for (int idx : selected_) {
                             selSnapshot_.push_back(shapes_[idx]);
                         }
+                        snapshotAttachedSeeds();
                     }
                     break;
                 }
@@ -1891,6 +2037,7 @@ void PaintController::onMouseButton(int button, int action, int mods) {
             activeHandle_ = SelHandle::None;
             handleShapeIdx_ = -1;
             selSnapshot_.clear();
+            attachedSeedSnapshot_.clear();
             xformDrag_ = false;
             if (bandSelect_) {
                 bandSelect_ = false;
@@ -1967,6 +2114,7 @@ void PaintController::onMouseMove(IPoint pos, int mods) {
             shapes_[idx] = selSnapshot_[k];
             applyToShape(shapes_[idx], m, 0.0f, 1.0f);
         }
+        transformAttachedSeedsForSelection(m, true); // 平移拖拽：种子从快照同步
         markDirty();
     }
     // 曲线控制点拖拽：改参数（控制点），像素由提交层重算——实时跟随

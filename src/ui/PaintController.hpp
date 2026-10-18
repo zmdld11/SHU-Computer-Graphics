@@ -6,6 +6,7 @@
 #include "geom/Transform.hpp"
 #include "raster/Clip.hpp"
 #include "raster/Rasterizer.hpp"
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <utility>
@@ -65,6 +66,8 @@ private:
     // 一个已完成、可重放的图形（参数化存储：变换改这里，像素是重算结果）
     struct Shape {
         Mode mode = Mode::Line;
+        std::uint64_t id = 0;       // 稳定标识（种子填充绑定所属图形用；0=尚未分配）
+        std::uint64_t parentId = 0; // SeedFill: 所属闭合图形 id（0=自由种子）
         IPoint a{};                  // Line: 起点；Circle/Arc: 圆心；SeedFill: 种子点
         IPoint b{};                  // Line: 终点；Clip: 原线段终点
         int radius = 0;              // Circle / Arc
@@ -110,6 +113,14 @@ private:
     void transformSelected(const geom::Mat3& m, float rotDeg, float scaleF);
     void beginXformDrag(IPoint anchor); // 开始整体拖拽：记录锚点并快照选中集合
     static void applyToShape(Shape& s, const geom::Mat3& m, float rotDeg, float scaleF);
+    // ---- 种子填充绑定（圆/多边形缩放时种子随图形走） ----
+    void addShape(Shape s);                              // 入列表并分配稳定 id
+    std::uint64_t findSeedParent(IPoint p) const;        // 包含 p 的最上层闭合图形 id
+    void snapshotAttachedSeeds();                        // 拖拽开始：快照选中图形的附加种子
+    void transformSeedsOfParent(std::uint64_t parentId, const geom::Mat3& m,
+                                bool useSnapshot);       // 变换某图形的附加种子
+    void transformAttachedSeedsForSelection(const geom::Mat3& m, bool useSnapshot);
+    IPoint clampSeedToParent(IPoint seed, const Shape& parent) const; // 防取整落到图形外
     int hitShape(IPoint p) const;                  // 返回命中的图形下标，无命中 -1
     bool shapeIntersectsRect(const Shape& s, const raster::Rect& r) const; // 框选：图形与矩形相交
     // 点击点吸附到某图形轮廓的最近点（对接点），返回该图形下标；skipIdx 用于选 B 时跳过 A
@@ -151,6 +162,7 @@ private:
     int widthIdx_ = 0;     // 0/1/2 → 1/3/5
     int fillColorIdx_ = 0; // 填充色调色板下标
     std::vector<Shape> shapes_;
+    std::uint64_t nextShapeId_ = 1; // 稳定 id 分配器（不随删除/下标变化）
     bool shiftHeld_ = false; // 最近一次事件的 Shift 状态（多选 / 45° 吸附）
     bool ctrlHeld_ = false;  // 最近一次事件的 Ctrl 状态（定步长缩放）
 
@@ -200,6 +212,8 @@ private:
     int handleShapeIdx_ = -1;              // 端点柄所属线段下标
     raster::Rect selBounds0_{};            // 柄拖拽开始时的选中集合外接矩形
     std::vector<Shape> selSnapshot_;       // 柄拖拽开始时选中图形快照（每帧从快照重算，防整型烘焙漂移）
+    // 拖拽开始时，选中图形所绑定的种子填充快照：(shapes_ 下标, 初始种子点)
+    std::vector<std::pair<int, IPoint>> attachedSeedSnapshot_;
 
     // 提交层缓存
     std::unique_ptr<FrameBuffer> committed_;
