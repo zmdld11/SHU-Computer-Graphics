@@ -97,7 +97,8 @@ private:
     void drawClipWindow(FrameBuffer& fb, const Color& c, bool dashed) const;
     void drawPreview(FrameBuffer& fb) const;
     void commitRender(); // 图形列表 → committed_
-    void copyCommittedClipped(FrameBuffer& fb) const; // 常驻裁剪：窗口内照抄，窗口外保持背景
+    void copyCommittedClipped(FrameBuffer& fb); // 常驻裁剪：窗口内照抄，窗口外保持背景
+    void rebuildClipCache();                    // 只在提交层/裁剪窗变化时重建掩码缓存
     bool clipLine(IPoint& a, IPoint& b) const;
     const char* clipAlgoName() const;
 
@@ -202,6 +203,11 @@ private:
     // 提交层缓存
     std::unique_ptr<FrameBuffer> committed_;
     bool dirty_ = true;
+
+    // 常驻裁剪的显示层缓存：窗口内内容 + 窗口外黑底。只在内容/窗口/尺寸变化时重建，
+    // 其余帧直接整块 memcpy 到显示缓冲，避免每帧逐像素掩码。
+    std::unique_ptr<FrameBuffer> clipCache_;
+    bool clipCacheDirty_ = true;
 };
 
 } // namespace cg

@@ -57,6 +57,8 @@ else()
 endif()
 
 # Debug 构建显式开启 libstdc++ 容器越界断言：任何越界下标立即 abort，
-# 不依赖工具链默认行为（CLion 捆绑 MinGW 默认开，其他 MinGW 环境未必）
+# 不依赖工具链默认行为（CLion 捆绑 MinGW 默认开，其他 MinGW 环境未必）。
+# 同时用 -Og：保留断言与调试信息，但逐像素路径比 -O0 快一个量级，交互不至于卡顿。
 target_compile_options(cg-engine PRIVATE
-    $<$<AND:$<CONFIG:Debug>,$<CXX_COMPILER_ID:GNU,Clang>>:-D_GLIBCXX_ASSERTIONS>)
+    $<$<AND:$<CONFIG:Debug>,$<CXX_COMPILER_ID:GNU,Clang>>:-D_GLIBCXX_ASSERTIONS>
+    $<$<AND:$<CONFIG:Debug>,$<CXX_COMPILER_ID:GNU,Clang>>:-Og>)

@@ -87,6 +87,7 @@ Window::Window(int width, int height, const char* title, bool hidden)
         return;
     }
     glfwMakeContextCurrent(window_);
+    glfwSwapInterval(1); // 与显示器刷新同步，避免空转把 CPU 打满
     glfwSetWindowSizeLimits(window_, 400, 300, GLFW_DONT_CARE, GLFW_DONT_CARE);
     glfwSetKeyCallback(window_, &Window::glfwKey);
     glfwSetMouseButtonCallback(window_, &Window::glfwMouseButton);
