@@ -91,12 +91,12 @@ int runFarmChecks() {
            "farm: 镜头右下夹取");
 
     // 重开：农田、选种、角色全部复位
-    world.debugPlant(0, Seed::Pearl, CropStage::Mature, true);
+    world.debugPlant(0, Seed::Tomato, CropStage::Mature, true);
     world.selectSeed(2);
     world.reset();
     world.setViewport(800, 600);
     expect(world.crop(0).stage == CropStage::Empty, "farm: 重开清空农田");
-    expect(world.selectedSeed() == Seed::Tea, "farm: 重开复位选种");
+    expect(world.selectedSeed() == Seed::Cabbage, "farm: 重开复位选种");
     expect(nearPoint(world.playerPos(), cellCenterF(kSpawnCol, kSpawnRow)),
            "farm: 重开回到出生点");
 

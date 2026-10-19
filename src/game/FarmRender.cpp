@@ -12,6 +12,7 @@
 #include <cmath>
 #include <cstdint>
 #include <iterator>
+#include <utility>
 #include <vector>
 
 namespace cg::game {
@@ -340,74 +341,118 @@ void drawCrop(Painter& p, FPoint c, const Crop& crop) {
         return;
     }
 
-    if (crop.kind == Seed::Tea) {
-        // 茶树：深色底团 + 偏左上受光，看起来是一丛而不是一堆圆。
-        p.ellipse(bx, by - 24.0f, 22.0f, 15.0f, kLeafDark, 28);
-        p.ellipse(bx - 15.0f, by - 28.0f, 12.0f, 11.0f, kLeafDark, 22);
-        p.ellipse(bx + 15.0f, by - 27.0f, 12.0f, 11.0f, kLeafDark, 22);
-        p.ellipse(bx - 7.0f, by - 38.0f, 12.0f, 11.0f, kLeafDark, 22);
-        p.ellipse(bx + 9.0f, by - 37.0f, 12.0f, 11.0f, kLeafDark, 22);
+    if (crop.kind == Seed::Cabbage) {
+        // 白菜：外层深色叶摊开，内层浅色叶抱住奶白色的菜心。
+        const std::vector<FPoint> leftOuter = {{bx - 2.0f, by - 3.0f},
+                                               {bx - 22.0f, by - 9.0f},
+                                               {bx - 29.0f, by - 19.0f},
+                                               {bx - 13.0f, by - 17.0f},
+                                               {bx - 3.0f, by - 12.0f}};
+        const std::vector<FPoint> rightOuter = {{bx + 2.0f, by - 3.0f},
+                                                {bx + 22.0f, by - 9.0f},
+                                                {bx + 29.0f, by - 19.0f},
+                                                {bx + 13.0f, by - 17.0f},
+                                                {bx + 3.0f, by - 12.0f}};
+        const std::vector<FPoint> backOuter = {{bx - 14.0f, by - 14.0f},
+                                               {bx - 6.0f, by - 35.0f},
+                                               {bx + 7.0f, by - 34.0f},
+                                               {bx + 15.0f, by - 13.0f},
+                                               {bx, by - 20.0f}};
+        p.polygon(backOuter, kLeafDark, kLeafDark, 1.2f);
+        p.polygon(leftOuter, kLeaf, kLeafDark, 1.2f);
+        p.polygon(rightOuter, kLeaf, kLeafDark, 1.2f);
 
-        p.ellipse(bx - 2.0f, by - 27.0f, 18.0f, 12.0f, kLeaf, 24);
-        p.ellipse(bx - 16.0f, by - 30.0f, 9.0f, 8.0f, kLeaf, 18);
-        p.ellipse(bx + 13.0f, by - 29.0f, 9.0f, 8.0f, kLeaf, 18);
-        p.ellipse(bx - 8.0f, by - 39.0f, 9.0f, 8.0f, kLeaf, 18);
-        p.ellipse(bx + 8.0f, by - 38.0f, 9.0f, 8.0f, kLeaf, 18);
+        const std::vector<FPoint> leftMid = {{bx - 1.0f, by - 7.0f},
+                                             {bx - 17.0f, by - 13.0f},
+                                             {bx - 20.0f, by - 24.0f},
+                                             {bx - 7.0f, by - 22.0f},
+                                             {bx + 1.0f, by - 15.0f}};
+        const std::vector<FPoint> rightMid = {{bx + 1.0f, by - 7.0f},
+                                              {bx + 17.0f, by - 13.0f},
+                                              {bx + 20.0f, by - 24.0f},
+                                              {bx + 7.0f, by - 22.0f},
+                                              {bx - 1.0f, by - 15.0f}};
+        p.polygon(leftMid, kLeafLight, kLeafDark, 1.0f);
+        p.polygon(rightMid, kLeafLight, kLeafDark, 1.0f);
+        p.ellipse(bx, by - 18.0f, 15.0f, 12.0f, kLeafLight, 24);
 
-        p.ellipse(bx - 12.0f, by - 34.0f, 7.0f, 5.0f, kLeafLight, 16);
-        p.ellipse(bx + 2.0f, by - 44.0f, 8.0f, 5.0f, kLeafLight, 16);
-        p.ellipse(bx + 16.0f, by - 33.0f, 6.0f, 4.0f, kLeafLight, 14);
-        p.ellipse(bx - 3.0f, by - 40.0f, 3.5f, 2.5f, kLeafHi, 12);
+        const std::vector<FPoint> leftFront = {{bx - 2.0f, by - 9.0f},
+                                               {bx - 13.0f, by - 20.0f},
+                                               {bx - 8.0f, by - 31.0f},
+                                               {bx + 1.0f, by - 22.0f}};
+        const std::vector<FPoint> rightFront = {{bx + 2.0f, by - 9.0f},
+                                                {bx + 13.0f, by - 20.0f},
+                                                {bx + 8.0f, by - 31.0f},
+                                                {bx - 1.0f, by - 22.0f}};
+        p.polygon(leftFront, kLeafHi, kLeafDark, 1.0f);
+        p.polygon(rightFront, kLeafHi, kLeafDark, 1.0f);
 
-        drawFlower(p, bx - 17.0f, by - 42.0f, 0.75f, kWhite);
-        drawFlower(p, bx + 15.0f, by - 38.0f, 0.7f, kWhite);
-        drawFlower(p, bx + 2.0f, by - 48.0f, 0.65f, kWhite);
-    } else if (crop.kind == Seed::Pearl) {
-        // 珍珠株：三根茎各挂一颗深色珍珠。
-        p.ellipse(bx, by - 10.0f, 17.0f, 10.0f, kLeafDark, 22);
-        p.ellipse(bx - 11.0f, by - 8.0f, 10.0f, 8.0f, kLeafDark, 18);
-        p.ellipse(bx + 11.0f, by - 8.0f, 10.0f, 8.0f, kLeafDark, 18);
-        p.ellipse(bx - 2.0f, by - 12.0f, 13.0f, 8.0f, kLeaf, 18);
+        p.ellipseOutline(bx, by - 22.0f, 9.0f, 11.0f, Color(228, 238, 192),
+                         kLeafDark, 1.4f, 24);
+        p.ellipse(bx - 2.5f, by - 25.0f, 3.2f, 4.0f, Color(244, 248, 218), 14);
+        p.line(bx - 7.0f, by - 19.0f, bx - 2.0f, by - 16.0f, kLeafHi, 1.0f);
+        p.line(bx + 7.0f, by - 20.0f, bx + 2.0f, by - 16.0f, kLeafHi, 1.0f);
+    } else if (crop.kind == Seed::Tomato) {
+        // 番茄：一根主茎挂三颗红果，果子顶部有绿色萼片。
+        p.line(bx, by - 2.0f, bx + 1.0f, by - 46.0f, kLeafDark, 2.4f);
+        p.ellipse(bx - 7.0f, by - 15.0f, 8.0f, 4.0f, kLeaf, 16);
+        p.ellipse(bx + 8.0f, by - 24.0f, 8.0f, 4.0f, kLeafLight, 16);
+        p.ellipse(bx - 7.0f, by - 33.0f, 7.0f, 3.5f, kLeaf, 14);
+        p.ellipse(bx + 6.0f, by - 42.0f, 6.0f, 3.0f, kLeafLight, 14);
+        p.line(bx + 1.0f, by - 10.0f, bx + 10.0f, by - 13.0f, kLeafDark, 1.0f);
+        p.line(bx + 1.0f, by - 28.0f, bx - 10.0f, by - 31.0f, kLeafDark, 1.0f);
 
-        p.line(bx - 10.0f, by - 10.0f, bx - 16.0f, by - 36.0f, kLeafDark, 2.0f);
-        p.line(bx, by - 12.0f, bx, by - 48.0f, kLeafDark, 2.0f);
-        p.line(bx + 10.0f, by - 10.0f, bx + 16.0f, by - 34.0f, kLeafDark, 2.0f);
-
-        p.ellipse(bx - 9.0f, by - 24.0f, 6.0f, 3.0f, kLeaf, 14);
-        p.ellipse(bx + 9.0f, by - 33.0f, 6.0f, 3.0f, kLeafLight, 14);
-        p.ellipse(bx - 4.0f, by - 40.0f, 5.0f, 2.5f, kLeafLight, 12);
-
-        const float pearlX[3] = {bx - 16.0f, bx, bx + 16.0f};
-        const float pearlY[3] = {by - 40.0f, by - 52.0f, by - 38.0f};
+        const Color tomato = Color(206, 76, 54);
+        const Color tomatoDark = Color(148, 44, 34);
+        const Color tomatoHi = Color(240, 132, 104);
+        const float fruitX[3] = {bx - 12.0f, bx + 11.0f, bx - 1.0f};
+        const float fruitY[3] = {by - 19.0f, by - 29.0f, by - 44.0f};
+        const float fruitR[3] = {8.0f, 7.5f, 7.0f};
         for (int i = 0; i < 3; ++i) {
-            p.ellipseOutline(pearlX[i], pearlY[i], 7.0f, 7.0f, Color(64, 46, 32), kOutline,
-                             1.2f, 20);
-            p.ellipse(pearlX[i] - 2.0f, pearlY[i] - 2.2f, 2.0f, 2.0f, kCreamShade, 12);
+            p.ellipseOutline(fruitX[i], fruitY[i], fruitR[i], fruitR[i] * 0.95f, tomato,
+                             tomatoDark, 1.2f, 22);
+            p.ellipse(fruitX[i] - 2.4f, fruitY[i] - 2.6f, 2.4f, 2.0f, tomatoHi, 10);
+            p.line(fruitX[i] - 4.5f, fruitY[i] - fruitR[i] + 1.0f,
+                   fruitX[i], fruitY[i] - fruitR[i] - 3.0f, kLeafDark, 1.8f);
+            p.line(fruitX[i] + 4.5f, fruitY[i] - fruitR[i] + 1.0f,
+                   fruitX[i], fruitY[i] - fruitR[i] - 3.0f, kLeafDark, 1.8f);
+            p.line(fruitX[i], fruitY[i] - fruitR[i] + 1.0f,
+                   fruitX[i] + 1.0f, fruitY[i] - fruitR[i] - 4.0f, kLeaf, 1.6f);
         }
+        drawFlower(p, bx + 12.0f, by - 50.0f, 0.65f, kFlowerYellow);
     } else {
-        // 椰子树：矮胖树干 + 五片叶子 + 两颗椰子。
-        p.line(bx, by, bx - 3.0f, by - 20.0f, kTrunkDark, 8.0f);
-        p.line(bx, by, bx - 3.0f, by - 20.0f, kTrunk, 5.0f);
-        p.line(bx - 3.0f, by - 20.0f, bx + 2.0f, by - 33.0f, kTrunkDark, 7.0f);
-        p.line(bx - 3.0f, by - 20.0f, bx + 2.0f, by - 33.0f, kTrunk, 4.0f);
+        // 胡萝卜：橙色根肩露出土面，上面是一丛羽状叶。
+        p.line(bx, by - 12.0f, bx - 19.0f, by - 43.0f, kLeafDark, 1.8f);
+        p.line(bx, by - 12.0f, bx - 12.0f, by - 50.0f, kLeaf, 1.6f);
+        p.line(bx, by - 12.0f, bx - 4.0f, by - 54.0f, kLeafDark, 1.8f);
+        p.line(bx, by - 12.0f, bx + 5.0f, by - 55.0f, kLeaf, 1.6f);
+        p.line(bx, by - 12.0f, bx + 13.0f, by - 49.0f, kLeafDark, 1.8f);
+        p.line(bx, by - 12.0f, bx + 18.0f, by - 40.0f, kLeaf, 1.5f);
 
-        p.ellipse(bx - 18.0f, by - 35.0f, 16.0f, 7.0f, kLeaf, 20);
-        p.ellipse(bx + 18.0f, by - 35.0f, 16.0f, 7.0f, kLeaf, 20);
-        p.ellipse(bx - 12.0f, by - 44.0f, 14.0f, 6.0f, kLeafLight, 20);
-        p.ellipse(bx + 13.0f, by - 44.0f, 14.0f, 6.0f, kLeafLight, 20);
-        p.ellipse(bx + 1.0f, by - 50.0f, 6.0f, 13.0f, kLeafLight, 20);
+        p.ellipse(bx - 14.0f, by - 30.0f, 8.0f, 3.2f, kLeaf, 14);
+        p.ellipse(bx - 19.0f, by - 39.0f, 6.0f, 2.6f, kLeafLight, 12);
+        p.ellipse(bx - 9.0f, by - 42.0f, 7.0f, 3.0f, kLeafLight, 14);
+        p.ellipse(bx - 2.0f, by - 48.0f, 7.0f, 3.0f, kLeaf, 14);
+        p.ellipse(bx + 7.0f, by - 47.0f, 6.0f, 2.6f, kLeafLight, 12);
+        p.ellipse(bx + 15.0f, by - 36.0f, 7.0f, 3.0f, kLeaf, 14);
+        p.ellipse(bx + 12.0f, by - 25.0f, 6.0f, 2.6f, kLeafLight, 12);
 
-        p.line(bx + 2.0f, by - 35.0f, bx - 30.0f, by - 37.0f, kLeafDark, 1.2f);
-        p.line(bx + 2.0f, by - 35.0f, bx + 31.0f, by - 37.0f, kLeafDark, 1.2f);
-        p.line(bx + 2.0f, by - 38.0f, bx - 22.0f, by - 46.0f, kLeafDark, 1.2f);
-        p.line(bx + 2.0f, by - 38.0f, bx + 23.0f, by - 46.0f, kLeafDark, 1.2f);
-
-        p.ellipseOutline(bx - 8.0f, by - 7.0f, 7.0f, 7.0f, Color(112, 70, 42), kOutline,
-                         1.2f, 18);
-        p.ellipseOutline(bx + 9.0f, by - 5.0f, 6.5f, 6.5f, Color(112, 70, 42), kOutline,
-                         1.2f, 18);
-        p.ellipse(bx - 10.0f, by - 9.0f, 2.0f, 2.0f, Color(148, 100, 62), 10);
-        p.ellipse(bx + 7.0f, by - 7.0f, 1.8f, 1.8f, Color(148, 100, 62), 10);
+        const Color carrot = Color(226, 128, 48);
+        const Color carrotDark = Color(166, 82, 28);
+        const Color carrotHi = Color(244, 164, 86);
+        const std::vector<FPoint> root = {{bx - 13.0f, by - 12.0f},
+                                          {bx + 13.0f, by - 12.0f},
+                                          {bx + 8.0f, by - 2.0f},
+                                          {bx + 2.0f, by + 9.0f},
+                                          {bx - 2.0f, by + 9.0f},
+                                          {bx - 8.0f, by - 2.0f}};
+        p.polygon(root, carrot, carrotDark, 1.4f);
+        p.ellipse(bx, by - 12.0f, 13.0f, 5.0f, carrot, 22);
+        p.ellipse(bx - 4.0f, by - 13.0f, 4.5f, 2.2f, carrotHi, 12);
+        p.line(bx - 10.0f, by - 5.0f, bx + 10.0f, by - 5.0f, carrotDark, 1.2f);
+        p.line(bx - 7.0f, by + 1.0f, bx + 7.0f, by + 1.0f, carrotDark, 1.0f);
+        p.line(bx - 5.0f, by - 10.0f, bx - 8.0f, by - 16.0f, kLeafDark, 1.4f);
+        p.line(bx + 5.0f, by - 10.0f, bx + 9.0f, by - 16.0f, kLeafDark, 1.4f);
     }
 }
 
@@ -980,32 +1025,47 @@ void drawHover(Painter& p, const Hover& h, float camX, float camY, float time) {
 
 void drawSeedIcon(Painter& p, int kind, FPoint c) {
     if (kind == 0) {
-        const std::vector<FPoint> leaf = {{c.x - 18.0f, c.y + 8.0f},
-                                          {c.x - 9.0f, c.y - 6.0f},
-                                          {c.x + 9.0f, c.y - 12.0f},
-                                          {c.x + 18.0f, c.y - 2.0f},
-                                          {c.x + 7.0f, c.y + 10.0f},
-                                          {c.x - 7.0f, c.y + 12.0f}};
-        p.polygon(leaf, kLeaf, kOutline, 1.5f);
-        p.line(c.x - 14.0f, c.y + 8.0f, c.x + 12.0f, c.y - 6.0f, kLeafHi, 1.5f);
-        p.line(c.x - 3.0f, c.y + 2.0f, c.x + 6.0f, c.y - 8.0f, kLeafHi, 1.0f);
-        p.line(c.x - 14.0f, c.y + 8.0f, c.x - 9.0f, c.y + 12.0f, kLeafDark, 1.0f);
+        const std::vector<FPoint> outer = {{c.x - 18.0f, c.y + 10.0f},
+                                           {c.x - 14.0f, c.y - 8.0f},
+                                           {c.x, c.y - 16.0f},
+                                           {c.x + 14.0f, c.y - 8.0f},
+                                           {c.x + 18.0f, c.y + 10.0f},
+                                           {c.x, c.y + 15.0f}};
+        p.polygon(outer, kLeafDark, kOutline, 1.4f);
+        p.ellipse(c.x, c.y - 1.0f, 12.0f, 11.0f, kLeaf, 22);
+        p.ellipse(c.x - 4.0f, c.y - 4.0f, 4.0f, 5.0f, Color(228, 238, 192), 14);
+        p.line(c.x - 12.0f, c.y + 8.0f, c.x - 3.0f, c.y - 1.0f, kLeafHi, 1.2f);
+        p.line(c.x + 12.0f, c.y + 8.0f, c.x + 3.0f, c.y - 1.0f, kLeafHi, 1.2f);
     } else if (kind == 1) {
-        const float px[3] = {c.x - 9.0f, c.x + 9.0f, c.x};
-        const float py[3] = {c.y + 7.0f, c.y + 7.0f, c.y - 8.0f};
-        for (int i = 0; i < 3; ++i) {
-            p.ellipseOutline(px[i], py[i], 8.0f, 8.0f, Color(76, 54, 40), kOutline, 1.2f,
-                             20);
-            p.ellipse(px[i] - 2.5f, py[i] - 2.5f, 2.2f, 2.2f, kCream, 12);
-        }
-    } else {
-        p.ellipseOutline(c.x, c.y + 1.0f, 16.0f, 16.0f, Color(112, 70, 42), kOutline, 1.5f,
+        const Color tomato = Color(206, 76, 54);
+        p.ellipseOutline(c.x, c.y + 1.0f, 16.0f, 15.0f, tomato, Color(148, 44, 34), 1.4f,
                          24);
-        p.ellipse(c.x, c.y + 1.0f, 12.0f, 12.0f, Color(140, 92, 56), 20);
-        p.ellipse(c.x - 5.0f, c.y - 3.0f, 2.5f, 2.5f, Color(60, 40, 26), 12);
-        p.ellipse(c.x + 5.0f, c.y - 3.0f, 2.5f, 2.5f, Color(60, 40, 26), 12);
-        p.ellipse(c.x, c.y + 5.0f, 2.5f, 2.0f, Color(60, 40, 26), 12);
-        p.line(c.x + 5.0f, c.y - 12.0f, c.x + 10.0f, c.y - 24.0f, kCream, 3.0f);
+        p.ellipse(c.x - 5.0f, c.y - 4.0f, 4.0f, 3.0f, Color(240, 132, 104), 12);
+        for (int i = 0; i < 5; ++i) {
+            const float a = -3.14159f * 0.5f + static_cast<float>(i) * 1.25664f;
+            p.line(c.x, c.y - 13.0f, c.x + std::cos(a) * 7.0f,
+                   c.y - 13.0f + std::sin(a) * 5.0f, kLeafDark, 2.2f);
+        }
+        p.ellipse(c.x, c.y - 15.0f, 2.0f, 2.0f, kLeaf, 10);
+    } else {
+        const std::vector<FPoint> root = {{c.x - 11.0f, c.y - 10.0f},
+                                          {c.x + 11.0f, c.y - 10.0f},
+                                          {c.x + 7.0f, c.y - 1.0f},
+                                          {c.x + 2.0f, c.y + 18.0f},
+                                          {c.x - 2.0f, c.y + 18.0f},
+                                          {c.x - 7.0f, c.y - 1.0f}};
+        p.polygon(root, Color(226, 128, 48), Color(166, 82, 28), 1.4f);
+        p.ellipse(c.x, c.y - 10.0f, 11.0f, 4.0f, Color(226, 128, 48), 18);
+        p.line(c.x - 8.0f, c.y - 4.0f, c.x + 8.0f, c.y - 4.0f, Color(166, 82, 28), 1.2f);
+        p.line(c.x - 6.0f, c.y + 3.0f, c.x + 6.0f, c.y + 3.0f, Color(166, 82, 28), 1.0f);
+        p.line(c.x, c.y - 12.0f, c.x - 11.0f, c.y - 26.0f, kLeafDark, 2.0f);
+        p.line(c.x, c.y - 12.0f, c.x - 3.0f, c.y - 29.0f, kLeaf, 1.8f);
+        p.line(c.x, c.y - 12.0f, c.x + 5.0f, c.y - 29.0f, kLeafDark, 2.0f);
+        p.line(c.x, c.y - 12.0f, c.x + 11.0f, c.y - 24.0f, kLeaf, 1.8f);
+        p.ellipse(c.x - 9.0f, c.y - 22.0f, 5.0f, 2.4f, kLeaf, 10);
+        p.ellipse(c.x - 3.0f, c.y - 26.0f, 4.5f, 2.2f, kLeafLight, 10);
+        p.ellipse(c.x + 4.0f, c.y - 26.0f, 5.0f, 2.4f, kLeaf, 10);
+        p.ellipse(c.x + 9.0f, c.y - 21.0f, 4.0f, 2.0f, kLeafLight, 10);
     }
 }
 
@@ -1137,6 +1197,32 @@ FrameBuffer FarmRender::captureWorld(const FarmWorld& world) const {
 
 FrameBuffer FarmRender::captureBackground() const {
     return background_;
+}
+
+std::vector<FrameBuffer> FarmRender::captureLayers(const FarmWorld& world) const {
+    FrameBuffer hi(kWorldW * 2, kWorldH * 2);
+    Painter p(hi, 2.0f);
+    std::vector<FrameBuffer> layers;
+    layers.reserve(6);
+    auto snapshot = [&]() {
+        FrameBuffer out(kWorldW, kWorldH);
+        downsample2x(hi, out);
+        layers.push_back(std::move(out));
+    };
+
+    drawGround(p);
+    snapshot();
+    drawPath(p);
+    snapshot();
+    drawFarm(p, world);
+    snapshot();
+    drawPond(p);
+    snapshot();
+    drawMeadow(p);
+    snapshot();
+    drawTrees(p);
+    snapshot();
+    return layers;
 }
 
 } // namespace cg::game

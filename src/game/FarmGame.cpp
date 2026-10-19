@@ -12,7 +12,9 @@
 
 #include <GLFW/glfw3.h>
 #include <chrono>
+#include <cstddef>
 #include <iostream>
+#include <vector>
 
 namespace cg::game {
 namespace {
@@ -146,19 +148,32 @@ bool writeFarmCapture() {
         if (!cg::writePPM("game-background.ppm", bgRender.captureBackground())) {
             return false;
         }
+
+        const char* layerNames[] = {"game-layer-1-ground.ppm",
+                                    "game-layer-2-path.ppm",
+                                    "game-layer-3-farm.ppm",
+                                    "game-layer-4-pond.ppm",
+                                    "game-layer-5-meadow.ppm",
+                                    "game-layer-6-trees.ppm"};
+        const std::vector<FrameBuffer> layers = bgRender.captureLayers(bgWorld);
+        for (std::size_t i = 0; i < layers.size(); ++i) {
+            if (!cg::writePPM(layerNames[i], layers[i])) {
+                return false;
+            }
+        }
     }
 
     // 美术展示用的一组作物：三种作物、三个生长阶段、干土/湿土都有。
-    world.debugPlant(0, Seed::Tea, CropStage::Mature, false);
-    world.debugPlant(1, Seed::Tea, CropStage::Sprout, true);
-    world.debugPlant(2, Seed::Tea, CropStage::Seed, false);
-    world.debugPlant(3, Seed::Coconut, CropStage::Mature, false);
-    world.debugPlant(4, Seed::Pearl, CropStage::Mature, true);
-    world.debugPlant(6, Seed::Tea, CropStage::Mature, true);
-    world.debugPlant(7, Seed::Pearl, CropStage::Sprout, false);
-    world.debugPlant(8, Seed::Coconut, CropStage::Sprout, true);
-    world.debugPlant(9, Seed::Pearl, CropStage::Mature, true);
-    world.debugPlant(11, Seed::Coconut, CropStage::Mature, false);
+    world.debugPlant(0, Seed::Cabbage, CropStage::Mature, false);
+    world.debugPlant(1, Seed::Cabbage, CropStage::Sprout, true);
+    world.debugPlant(2, Seed::Cabbage, CropStage::Seed, false);
+    world.debugPlant(3, Seed::Carrot, CropStage::Mature, false);
+    world.debugPlant(4, Seed::Tomato, CropStage::Mature, true);
+    world.debugPlant(6, Seed::Cabbage, CropStage::Mature, true);
+    world.debugPlant(7, Seed::Tomato, CropStage::Sprout, false);
+    world.debugPlant(8, Seed::Carrot, CropStage::Sprout, true);
+    world.debugPlant(9, Seed::Tomato, CropStage::Mature, true);
+    world.debugPlant(11, Seed::Carrot, CropStage::Mature, false);
 
     world.debugSetPlayerCell(kDockTipCol - 1, kDockRow);
 
@@ -183,8 +198,8 @@ bool writeFarmCapture() {
         return false;
     }
 
-    std::cout << "[game] 已写出 game-background.ppm / game-world.ppm / "
-                 "game-pond.ppm / game-farm.ppm" << std::endl;
+    std::cout << "[game] 已写出 game-background.ppm / game-layer-1..6.ppm / "
+                 "game-world.ppm / game-pond.ppm / game-farm.ppm" << std::endl;
     return true;
 }
 

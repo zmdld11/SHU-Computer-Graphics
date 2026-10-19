@@ -5,6 +5,8 @@
 #include "core/FrameBuffer.hpp"
 #include "game/FarmWorld.hpp"
 
+#include <vector>
+
 namespace cg::game {
 
 class FarmRender {
@@ -22,6 +24,9 @@ public:
 
     // 汇报/报告用的纯背景：空田、无角色、无 HUD。
     FrameBuffer captureBackground() const;
+
+    // 分层累计帧：草地、土路、农田、池塘与栈道、花草石头、树木，共 6 张。
+    std::vector<FrameBuffer> captureLayers(const FarmWorld& world) const;
 
 private:
     FrameBuffer background_;

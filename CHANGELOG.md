@@ -2,6 +2,40 @@
 
 本项目以"实验任务"为单位推进：每个实验一个分支、一个 PR、一个同名 tag（约定见 [CONTRIBUTING.md](CONTRIBUTING.md)）。
 
+## 调整 — 2026-10-19：第 6 周 PPT 改纯白底并加入图层叠加动画（#69）
+
+### 变更
+
+- 6 页 PPT 改为纯白背景，深绿正文、浅绿分隔线和土黄点缀；保留大字和左文右图
+- `FarmRender::captureLayers()` 按草地/土路/农田/池塘/花草/树木六个阶段输出累计帧；
+  `--game-capture` 新增 `game-layer-1..6.ppm`
+- 用 Pillow 对相邻累计帧做差分，生成六张带透明通道的 PNG；第 5 页用
+  ppt-master `animations.json` 原生淡入动画逐层叠加
+- 第 5 页文案改为“背景由六层元素叠成”，不再以图元为主线；新增
+  `assets/场景图层叠加.gif` 预览
+- 讲稿约 677 字，约 3.3 分钟
+
+### 验证
+
+- `svg_quality_checker.py`：6 页 0 error；`animation_config.py validate` 通过
+- PPTX 检查：六页背景均为 `#FFFFFF`，slide 5 含 6 个 `animEffect`，
+  图片为透明 PNG 且按序叠放
+- PowerPoint 打开、保存备注并导出 PDF 正常；正文最小 24pt，注释最小 21pt
+
+## 调整 — 2026-10-19：三种作物改为白菜、番茄、胡萝卜（#68）
+
+### 变更
+
+- `Seed` 枚举改为 `Cabbage / Tomato / Carrot`；HUD 种子图标、成熟作物绘制、
+  `--game-capture` 示范田同步更新
+- 白菜：层叠叶 + 浅色菜心；番茄：主茎 + 三颗红果 + 萼片；胡萝卜：橙色根肩 + 羽状叶
+- 设计文档中的订单、库存字段、作物表和美术说明同步替换，移除奶茶原料设定
+
+### 验证
+
+- `--game-smoke` 与 `--smoke` 通过
+- `--game-capture` 输出包含三种新作物；截图确认图标与成熟态可区分
+
 ## 调整 — 2026-10-19：按旧 PPT 风格重做第 6 周汇报（#67）
 
 ### 变更

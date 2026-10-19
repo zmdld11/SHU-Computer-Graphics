@@ -31,7 +31,7 @@ void FarmWorld::reset() {
     walkPhase_ = 0.0f;
     animTime_ = 0.0f;
     plots_.fill(Crop{});
-    selectedSeed_ = Seed::Tea;
+    selectedSeed_ = Seed::Cabbage;
     hover_ = Hover{};
     cameraReady_ = false;
     updateCamera(0.0f, true);

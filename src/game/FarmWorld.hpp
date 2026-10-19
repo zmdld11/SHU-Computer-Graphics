@@ -9,11 +9,11 @@
 
 namespace cg::game {
 
-enum class Seed : int { Tea = 0, Pearl = 1, Coconut = 2 };
+enum class Seed : int { Cabbage = 0, Tomato = 1, Carrot = 2 };
 enum class CropStage : int { Empty = 0, Seed = 1, Sprout = 2, Mature = 3 };
 
 struct Crop {
-    Seed kind = Seed::Tea;
+    Seed kind = Seed::Cabbage;
     CropStage stage = CropStage::Empty;
     float age = 0.0f;
     bool watered = false;
@@ -87,7 +87,7 @@ private:
     float animTime_ = 0.0f;
 
     std::array<Crop, kPlotCols * kPlotRows> plots_{};
-    Seed selectedSeed_ = Seed::Tea;
+    Seed selectedSeed_ = Seed::Cabbage;
     Hover hover_{};
 };
 
