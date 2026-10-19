@@ -2,6 +2,22 @@
 
 本项目以"实验任务"为单位推进：每个实验一个分支、一个 PR、一个同名 tag（约定见 [CONTRIBUTING.md](CONTRIBUTING.md)）。
 
+## 调整 — 2026-10-19：按旧 PPT 风格重做第 6 周汇报（#67）
+
+### 变更
+
+- 本地克隆并使用 `hugohe3/ppt-master` Quick 流程：6 页 SVG → 质量检查 → 原生 PPTX
+- 版式参考用户旧 PPT：深绿底、米色大字、左边文字右边大图；去掉卡片、徽章、胶囊标签和投影
+- 标题改为“项目介绍、场景布置、操作逻辑、场景绘制、进度安排”
+- 正文 24pt 起，注释 21pt 起；场景页只放 1536×1152 纯背景
+- 讲稿约 718 字，3.3~4 分钟
+
+### 验证
+
+- `svg_quality_checker.py --quick-generate --canonical-authoring --stage final`：6 页 0 error
+- 导出 PPTX 字号检查：正文最小 24pt，注释最小 21pt
+- PowerPoint 打开并导出 PDF；6 页逐页视觉检查通过
+
 ## 调整 — 2026-10-18：第 6 周 PPT 去 AI 味（#66）
 
 ### 变更
