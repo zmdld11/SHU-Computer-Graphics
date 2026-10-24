@@ -794,6 +794,7 @@ bool meadowBlocked(float x, float y) {
 }
 
 void drawLampPost(Painter& p);
+void drawCabinExterior(Painter& p);
 
 void drawMeadow(Painter& p) {
     for (int row = kWalkMinRow; row <= kWalkMaxRow; ++row) {
@@ -868,6 +869,7 @@ void drawMeadow(Painter& p) {
     p.arc(bx, by - 21.0f, 12.0f, 8.0f, 3.4f, 6.0f, kWoodLight, 1.5f, 12);
 
     drawLampPost(p);
+    drawCabinExterior(p);
 }
 
 // 路灯：灯杆+灯头+暖色灯泡。夜里 bulb 的亮度靠 drawLampGlow 每帧叠光。
@@ -886,6 +888,73 @@ void drawLampPost(Painter& p) {
            1.5f);
     p.ellipse(kLampX, kLampBulbY + 3.0f, 6.0f, 6.5f, Color(250, 204, 90), 16);
     p.ellipse(kLampX - 1.5f, kLampBulbY + 1.0f, 1.8f, 2.2f, kCream, 10);
+}
+
+// 小屋外观（静态）：石砌地基、奶油抹泥墙、深红坡屋顶、烟囱和暖色门窗。
+void drawCabinExterior(Painter& p) {
+    const float x = kCabinX;
+    const float y = kCabinY;
+    const float w = kCabinW;
+    const float h = kCabinH;
+
+    // 地基与草影
+    p.ellipse(x + w * 0.5f, y + h + 6.0f, w * 0.55f, 20.0f, kGrassDeep, 32);
+    p.rect(x - 10.0f, y + h - 26.0f, w + 20.0f, 30.0f, kStoneDark);
+    p.rect(x - 8.0f, y + h - 24.0f, w + 16.0f, 24.0f, kStone);
+
+    // 墙体：奶油抹泥 + 深木梁
+    const std::vector<FPoint> wall = {{x, y + 52.0f}, {x + w, y + 52.0f},
+                                      {x + w, y + h}, {x, y + h}};
+    p.polygon(wall, Color(226, 208, 168), kOutline, 2.0f);
+    for (int i = 0; i <= 4; ++i) {
+        const float vx = x + 10.0f + static_cast<float>(i) * (w - 20.0f) / 4.0f;
+        p.rect(vx - 4.0f, y + 54.0f, 8.0f, h - 78.0f, kWoodDark);
+    }
+    p.rect(x, y + 54.0f, w, 7.0f, kWoodDark);
+
+    // 屋顶：双层深红坡顶，带出檐。
+    const std::vector<FPoint> roof = {{x - 26.0f, y + 62.0f},
+                                      {x + w * 0.5f, y - 34.0f},
+                                      {x + w + 26.0f, y + 62.0f},
+                                      {x + w + 12.0f, y + 68.0f},
+                                      {x + w * 0.5f, y - 20.0f},
+                                      {x - 12.0f, y + 68.0f}};
+    p.polygon(roof, Color(156, 74, 52), kOutline, 2.0f);
+    const std::vector<FPoint> roofFront = {{x - 12.0f, y + 68.0f},
+                                           {x + w * 0.5f, y - 20.0f},
+                                           {x + w + 12.0f, y + 68.0f},
+                                           {x + w * 0.5f, y - 6.0f}};
+    p.polygon(roofFront, Color(184, 92, 62), kOutline, 2.0f);
+
+    // 烟囱 + 炊烟
+    p.rect(x + w - 74.0f, y - 18.0f, 26.0f, 58.0f, kStoneDark);
+    p.rect(x + w - 77.0f, y - 22.0f, 32.0f, 8.0f, kStone);
+    p.ellipse(x + w - 61.0f, y - 34.0f, 9.0f, 6.0f, Color(226, 226, 218), 14);
+    p.ellipse(x + w - 54.0f, y - 52.0f, 12.0f, 8.0f, Color(236, 236, 228), 14);
+    p.ellipse(x + w - 44.0f, y - 74.0f, 15.0f, 10.0f, Color(244, 244, 238), 14);
+
+    // 门：圆头木门 + 把手，门前一块石板。
+    const float dx = kCabinDoorX;
+    p.rect(dx - 26.0f, kCabinDoorY - 12.0f, 52.0f, 12.0f, kSandDark);
+    const std::vector<FPoint> door = {{dx - 22.0f, kCabinDoorY - 10.0f},
+                                      {dx + 22.0f, kCabinDoorY - 10.0f},
+                                      {dx + 22.0f, kCabinDoorY - 58.0f},
+                                      {dx, kCabinDoorY - 74.0f},
+                                      {dx - 22.0f, kCabinDoorY - 58.0f}};
+    p.polygon(door, kWoodDark, kOutline, 2.0f);
+    p.line(dx - 12.0f, kCabinDoorY - 16.0f, dx - 12.0f, kCabinDoorY - 60.0f,
+           Color(78, 50, 30), 2.0f);
+    p.line(dx + 12.0f, kCabinDoorY - 16.0f, dx + 12.0f, kCabinDoorY - 60.0f,
+           Color(78, 50, 30), 2.0f);
+    p.ellipse(dx + 14.0f, kCabinDoorY - 40.0f, 3.0f, 3.0f, kFlowerYellow, 10);
+
+    // 两扇暖光窗
+    for (float wx : {x + 44.0f, x + w - 92.0f}) {
+        p.rect(wx - 4.0f, y + 88.0f, 52.0f, 46.0f, kWoodDark);
+        p.rect(wx, y + 92.0f, 44.0f, 38.0f, Color(250, 216, 130));
+        p.line(wx + 22.0f, y + 92.0f, wx + 22.0f, y + 130.0f, kWoodDark, 2.0f);
+        p.line(wx, y + 111.0f, wx + 44.0f, y + 111.0f, kWoodDark, 2.0f);
+    }
 }
 
 void drawTrees(Painter& p) {
@@ -1061,12 +1130,22 @@ void drawHover(Painter& p, const Hover& h, float camX, float camY, float time) {
     drawBracket(p, x + static_cast<float>(kCell) - m,
                 y + static_cast<float>(kCell) - m, -1.0f, -1.0f, t);
 
+    const float cx = x + static_cast<float>(kCell) * 0.5f;
     if (h.kind == HoverKind::Pond) {
         const float bob = std::sin(time * 3.0f) * 2.0f;
-        drawHoverFish(p, x + static_cast<float>(kCell) * 0.5f, y - 8.0f + bob);
+        drawHoverFish(p, cx, y - 8.0f + bob);
+    } else if (h.kind == HoverKind::Door) {
+        // 进门提示：一扇奶油色小门。
+        p.rectOutline(cx - 6.0f, y - 14.0f, 12.0f, 15.0f, kOutline, 3.0f);
+        p.rect(cx - 4.0f, y - 12.0f, 8.0f, 11.0f, kCream);
+        p.ellipse(cx + 1.5f, y - 7.0f, 1.0f, 1.0f, kOutline, 8);
+    } else if (h.kind == HoverKind::Bed) {
+        // 睡觉提示：奶油色 Z 字。
+        p.line(cx - 5.0f, y - 13.0f, cx + 5.0f, y - 13.0f, kCream, 2.0f);
+        p.line(cx + 5.0f, y - 13.0f, cx - 5.0f, y - 3.0f, kCream, 2.0f);
+        p.line(cx - 5.0f, y - 3.0f, cx + 5.0f, y - 3.0f, kCream, 2.0f);
     } else {
-        p.ellipse(x + static_cast<float>(kCell) * 0.5f,
-                  y + static_cast<float>(kCell) * 0.5f, 2.5f, 2.5f, kCream, 12);
+        p.ellipse(cx, y + static_cast<float>(kCell) * 0.5f, 2.5f, 2.5f, kCream, 12);
     }
 }
 
@@ -1499,18 +1578,23 @@ void drawShadows(Painter& p, const FarmWorld& world, float camX, float camY,
     }
 }
 
-// 全屏环境色：夜里压暗偏蓝，晨昏扫一层暖橙。HUD 在它之后绘制，不受影响。
-void applyAmbient(FrameBuffer& fb, float hour) {
+// 全屏环境色：夜里压暗偏蓝，晨昏扫一层暖橙。室内系数 <1（屋里亮一点）。
+// HUD 在它之后绘制，不受影响。
+void applyAmbient(FrameBuffer& fb, float hour, float indoorScale = 1.0f) {
     AmbientTint blue;
     AmbientTint warm;
     ambientTintAt(hour, blue, warm);
     if (blue.alpha > 0) {
+        const std::uint8_t a =
+            static_cast<std::uint8_t>(static_cast<float>(blue.alpha) * indoorScale);
         fb.blendRect(0, 0, fb.width() - 1, fb.height() - 1, Color(blue.r, blue.g, blue.b),
-                     blue.alpha);
+                     a);
     }
     if (warm.alpha > 0) {
+        const std::uint8_t a =
+            static_cast<std::uint8_t>(static_cast<float>(warm.alpha) * indoorScale);
         fb.blendRect(0, 0, fb.width() - 1, fb.height() - 1, Color(warm.r, warm.g, warm.b),
-                     warm.alpha);
+                     a);
     }
 }
 
@@ -1532,6 +1616,114 @@ void drawLampGlow(Painter& p, const FarmWorld& world, float camX, float camY,
     }
     const std::uint8_t core = static_cast<std::uint8_t>(170.0f * sky.lampIntensity);
     p.ellipse(x, y + 3.0f, 9.0f, 9.5f, Color(255, 236, 170), 18, core);
+}
+
+// ---------------- 小屋室内 ----------------
+
+// 室内静态布置：墙、地板、地毯、床、储物箱、桌子、门垫。窗户玻璃的"天色"
+// 由 frame() 每帧按当前时刻重画，其余全部烘进 cabinBackground_。
+void drawCabinRoom(Painter& p) {
+    const float W = static_cast<float>(kRoomW);
+    const float H = static_cast<float>(kRoomH);
+
+    // 墙：上墙抹泥 + 木梁，侧墙/下墙木纹板。
+    p.rect(0.0f, 0.0f, W, 64.0f, Color(216, 198, 160));
+    p.rect(0.0f, 0.0f, W, 6.0f, kWoodDark);
+    for (int i = 0; i < 5; ++i) {
+        p.rect(24.0f + static_cast<float>(i) * 176.0f, 0.0f, 10.0f, 64.0f, kWoodDark);
+    }
+    p.rect(0.0f, 56.0f, W, 8.0f, kWoodDark);
+    p.rect(0.0f, 64.0f, 32.0f, H - 64.0f, kWoodDark);
+    p.rect(W - 32.0f, 64.0f, 32.0f, H - 64.0f, kWoodDark);
+    for (int i = 0; i < 4; ++i) {
+        p.rect(0.0f, 64.0f + static_cast<float>(i) * 8.0f, 32.0f, 2.0f, kTrunk);
+        p.rect(W - 32.0f, 64.0f + static_cast<float>(i) * 8.0f, 32.0f, 2.0f, kTrunk);
+    }
+    p.rect(32.0f, H - 64.0f, W - 64.0f, 64.0f, kWoodDark);
+    // 底墙出门的开口（地垫就在开口里）。
+    p.rect(352.0f, H - 64.0f, 96.0f, 64.0f, Color(24, 18, 14));
+    p.rect(32.0f, H - 64.0f, 320.0f, 4.0f, kTrunk);
+    p.rect(448.0f, H - 64.0f, 320.0f, 4.0f, kTrunk);
+
+    // 地板：横向木条 + 板缝。
+    p.rect(32.0f, 64.0f, W - 64.0f, H - 128.0f, kWood);
+    std::uint32_t h = hash2(7, 13);
+    for (int row = 0; row < 17; ++row) {
+        const float y = 64.0f + static_cast<float>(row) * 32.0f;
+        p.rect(32.0f, y + 30.0f, W - 64.0f, 2.0f, kWoodDark);
+        for (int col = 0; col < 7; ++col) {
+            const std::uint32_t v = hash2(row * 7 + col, row + col * 3);
+            const float x = 40.0f + static_cast<float>(((v >> (col * 3)) & 0x7Fu) % 720u);
+            p.rect(x, y + 4.0f + static_cast<float>((v >> 5) & 0x7u), 26.0f, 2.0f,
+                   (v & 1u) ? kWoodLight : kWoodDark);
+        }
+    }
+
+    // 地毯：圆角椭圆 + 菱形花纹。
+    p.ellipse(400.0f, 300.0f, 130.0f, 68.0f, Color(168, 92, 70), 48);
+    p.ellipse(400.0f, 300.0f, 116.0f, 58.0f, Color(196, 116, 88), 44);
+    p.ellipse(400.0f, 300.0f, 84.0f, 40.0f, Color(168, 92, 70), 40);
+    p.ellipse(400.0f, 300.0f, 52.0f, 24.0f, Color(222, 150, 112), 28);
+    for (int i = 0; i < 6; ++i) {
+        const float a = kPi * static_cast<float>(i) / 3.0f;
+        p.ellipse(400.0f + std::cos(a) * 100.0f, 300.0f + std::sin(a) * 49.0f, 5.0f, 3.0f,
+                  kCream, 10);
+    }
+
+    // 床：木框 + 床垫 + 白枕 + 绿被（放左半屏，右侧留给订单板 HUD）。
+    const float bx = 4 * kCell;
+    const float by = 3 * kCell;
+    const float bw = 4 * kCell;
+    const float bh = 6 * kCell;
+    p.rect(bx + 5.0f, by + 7.0f, bw, bh, Color(40, 28, 18));
+    p.rect(bx, by, bw, bh, kWoodDark);
+    p.rect(bx + 5.0f, by + 5.0f, bw - 10.0f, bh - 10.0f, kCream);
+    p.rect(bx + 9.0f, by + 9.0f, bw - 18.0f, 30.0f, kWhite);
+    p.ellipse(bx + bw * 0.5f, by + 26.0f, bw * 0.28f, 11.0f, Color(240, 240, 230), 20);
+    p.rect(bx + 5.0f, by + 46.0f, bw - 10.0f, bh - 56.0f, kLeaf);
+    p.rect(bx + 5.0f, by + 46.0f, bw - 10.0f, 6.0f, kLeafLight);
+    p.line(bx + 5.0f, by + 96.0f, bx + bw - 5.0f, by + 96.0f, kLeafDark, 2.0f);
+    p.line(bx + 5.0f, by + 128.0f, bx + bw - 5.0f, by + 128.0f, kLeafDark, 2.0f);
+    for (int i = 0; i < 3; ++i) {
+        p.rect(bx + 5.0f, by + 56.0f + static_cast<float>(i) * 44.0f, bw - 10.0f, 2.0f,
+               kLeafDark);
+    }
+    p.rect(bx, by + bh - 8.0f, bw, 8.0f, kTrunk);
+
+    // 储物箱：两只木箱摞一只（右上角，在订单板下方仍露出一截）。
+    p.rect(608.0f, 100.0f, 88.0f, 78.0f, kOutline);
+    p.rect(612.0f, 104.0f, 80.0f, 70.0f, kWood);
+    p.line(612.0f, 104.0f, 692.0f, 174.0f, kWoodDark, 3.0f);
+    p.line(692.0f, 104.0f, 612.0f, 174.0f, kWoodDark, 3.0f);
+    p.rect(612.0f, 136.0f, 80.0f, 5.0f, kWoodDark);
+    p.rect(628.0f, 180.0f, 72.0f, 62.0f, kOutline);
+    p.rect(632.0f, 184.0f, 64.0f, 54.0f, kWoodLight);
+    p.rect(632.0f, 184.0f, 64.0f, 6.0f, kWoodDark);
+
+    // 桌子 + 蜡烛 + 书。
+    p.ellipse(304.0f, 120.0f, 52.0f, 20.0f, Color(40, 28, 18), 24);
+    p.ellipse(300.0f, 114.0f, 52.0f, 20.0f, kWoodDark, 24);
+    p.ellipse(300.0f, 112.0f, 44.0f, 15.0f, kWood, 24);
+    p.rect(296.0f, 92.0f, 8.0f, 18.0f, kCream);
+    p.line(300.0f, 92.0f, 300.0f, 84.0f, kFlowerYellow, 2.0f);
+    p.ellipse(300.0f, 82.0f, 2.5f, 4.0f, Color(255, 216, 120), 10);
+    p.rect(318.0f, 100.0f, 26.0f, 8.0f, Color(148, 62, 52));
+    p.rect(318.0f, 100.0f, 26.0f, 2.0f, kCream);
+
+    // 窗框：玻璃区域 (198,14)-(282,50)，天色由 frame() 每帧画。
+    p.rect(192.0f, 8.0f, 96.0f, 48.0f, kWoodDark);
+    p.rect(198.0f, 14.0f, 84.0f, 36.0f, Color(30, 40, 70));
+    p.line(240.0f, 14.0f, 240.0f, 50.0f, kWoodDark, 3.0f);
+    p.line(198.0f, 32.0f, 282.0f, 32.0f, kWoodDark, 3.0f);
+
+    // 门垫：编织纹 + 下箭头。
+    p.rect(352.0f, 512.0f, 96.0f, 32.0f, kOutline);
+    p.rect(356.0f, 516.0f, 88.0f, 24.0f, kSandDark);
+    for (int i = 0; i < 4; ++i) {
+        p.rect(356.0f, 518.0f + static_cast<float>(i) * 6.0f, 88.0f, 2.0f, kSand);
+    }
+    p.polygon({{388.0f, 530.0f}, {412.0f, 530.0f}, {400.0f, 542.0f}}, kCream, kOutline,
+              1.0f);
 }
 
 // ---------------- 时钟 HUD ----------------
@@ -1590,12 +1782,34 @@ void downsample2x(const FrameBuffer& src, FrameBuffer& dst) {
     }
 }
 
+// 窗户玻璃的天色：白天淡蓝、夜里深蓝，晨昏透一点暖——屋里也能看出外面的时段。
+void drawWindowSky(Painter& p, const FarmWorld& world, float camX, float camY) {
+    AmbientTint blue;
+    AmbientTint warm;
+    ambientTintAt(world.hour(), blue, warm);
+    const float night = static_cast<float>(blue.alpha) / 108.0f;
+    const float dusk = static_cast<float>(warm.alpha) / 46.0f;
+    Color sky = lerpColor(Color(150, 200, 236), Color(18, 26, 58), night);
+    sky = lerpColor(sky, Color(250, 170, 110), dusk * 0.55f);
+    const float x = 198.0f - camX;
+    const float y = 14.0f - camY;
+    p.rect(x, y, 84.0f, 36.0f, sky);
+    // 白天窗外挂个太阳光斑，夜里换两颗星。
+    if (night > 0.6f) {
+        p.ellipse(x + 18.0f, y + 9.0f, 1.2f, 1.2f, kCream, 8);
+        p.ellipse(x + 62.0f, y + 24.0f, 1.0f, 1.0f, kCream, 8);
+    } else {
+        p.ellipse(x + 60.0f, y + 10.0f, 6.0f, 6.0f, Color(255, 244, 200), 12);
+    }
+}
+
 } // namespace
 
-FarmRender::FarmRender() : background_(kWorldW, kWorldH), farmLayer_(1, 1) {}
+FarmRender::FarmRender()
+    : background_(kWorldW, kWorldH), farmLayer_(1, 1), cabinBackground_(1, 1) {}
 
 void FarmRender::build(const FarmWorld& world) {
-    // 静态层：草地/土路/池塘/花草/树木，一次烘成。
+    // 静态层：草地/土路/池塘/花草/树木/小屋外观，一次烘成。
     FrameBuffer hi(kWorldW * 2, kWorldH * 2);
     Painter p(hi, 2.0f);
     drawGround(p);
@@ -1604,6 +1818,13 @@ void FarmRender::build(const FarmWorld& world) {
     drawMeadow(p);
     drawTrees(p);
     downsample2x(hi, background_);
+
+    // 室内：整间房一次烘成（窗户玻璃天色每帧另画）。
+    FrameBuffer chi(kRoomW * 2, kRoomH * 2);
+    Painter cp(chi, 2.0f);
+    drawCabinRoom(cp);
+    downsample2x(chi, cabinBackground_);
+
     bakeFarmLayer(world);
 }
 
@@ -1631,26 +1852,40 @@ void FarmRender::frame(FrameBuffer& fb, const FarmWorld& world, bool hud) {
     fb.clear(kBorderGrass);
     const int camX = static_cast<int>(std::lround(world.camera().x));
     const int camY = static_cast<int>(std::lround(world.camera().y));
-    fb.copyRectFrom(background_, camX, camY, fb.width(), fb.height(), 0, 0);
-
     Painter p(fb, 1.0f);
-    const SkyState sky = skyAt(world.hour());
 
-    // 影子最先画（贴着背景），晨昏时太阳与路灯两套影子同时出现。
-    drawShadows(p, world, static_cast<float>(camX), static_cast<float>(camY), sky);
-    drawHover(p, world.hover(), static_cast<float>(camX), static_cast<float>(camY),
-              world.animTime());
-    drawFishing(p, world, static_cast<float>(camX), static_cast<float>(camY));
-    drawDragon(p,
-               {world.playerPos().x - static_cast<float>(camX),
-                world.playerPos().y - static_cast<float>(camY)},
-               world.moving(), world.walkPhase(), world.animTime(), world.facing());
-    drawBiteBubble(p, world, static_cast<float>(camX), static_cast<float>(camY));
-    drawParticles(p, world, static_cast<float>(camX), static_cast<float>(camY));
+    if (world.scene() == GameScene::Cabin) {
+        // 室内：拷房间缓存，窗户天色随时刻变，不画影子与路灯光。
+        fb.copyRectFrom(cabinBackground_, camX, camY, fb.width(), fb.height(), 0, 0);
+        drawWindowSky(p, world, static_cast<float>(camX), static_cast<float>(camY));
+        drawHover(p, world.hover(), static_cast<float>(camX), static_cast<float>(camY),
+                  world.animTime());
+        drawDragon(p,
+                   {world.playerPos().x - static_cast<float>(camX),
+                    world.playerPos().y - static_cast<float>(camY)},
+                   world.moving(), world.walkPhase(), world.animTime(), world.facing());
+        drawParticles(p, world, static_cast<float>(camX), static_cast<float>(camY));
+        applyAmbient(fb, world.hour(), 0.72f);
+    } else {
+        fb.copyRectFrom(background_, camX, camY, fb.width(), fb.height(), 0, 0);
+        const SkyState sky = skyAt(world.hour());
 
-    // 夜色/晨昏环境色压在场景与角色上，再由路灯光晕在夜里"点亮"灯周。
-    applyAmbient(fb, world.hour());
-    drawLampGlow(p, world, static_cast<float>(camX), static_cast<float>(camY), sky);
+        // 影子最先画（贴着背景），晨昏时太阳与路灯两套影子同时出现。
+        drawShadows(p, world, static_cast<float>(camX), static_cast<float>(camY), sky);
+        drawHover(p, world.hover(), static_cast<float>(camX), static_cast<float>(camY),
+                  world.animTime());
+        drawFishing(p, world, static_cast<float>(camX), static_cast<float>(camY));
+        drawDragon(p,
+                   {world.playerPos().x - static_cast<float>(camX),
+                    world.playerPos().y - static_cast<float>(camY)},
+                   world.moving(), world.walkPhase(), world.animTime(), world.facing());
+        drawBiteBubble(p, world, static_cast<float>(camX), static_cast<float>(camY));
+        drawParticles(p, world, static_cast<float>(camX), static_cast<float>(camY));
+
+        // 夜色/晨昏环境色压在场景与角色上，再由路灯光晕在夜里"点亮"灯周。
+        applyAmbient(fb, world.hour());
+        drawLampGlow(p, world, static_cast<float>(camX), static_cast<float>(camY), sky);
+    }
 
     if (hud) {
         drawHud(p, world, fb.width(), fb.height());
@@ -1658,6 +1893,13 @@ void FarmRender::frame(FrameBuffer& fb, const FarmWorld& world, bool hud) {
         if (world.won()) {
             drawWonPanel(p, world, fb.width(), fb.height());
         }
+    }
+
+    // 转场渐变压在最上层：0.5s 渐黑（中点切场景/跳时间）+ 0.5s 渐亮。
+    const float fade = world.fadeAlpha();
+    if (fade > 0.0f) {
+        fb.blendRect(0, 0, fb.width() - 1, fb.height() - 1, Color(8, 8, 10),
+                     static_cast<std::uint8_t>(std::clamp(fade, 0.0f, 1.0f) * 255.0f));
     }
 }
 

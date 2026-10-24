@@ -39,6 +39,7 @@ private:
     void bakeFarmLayer(const FarmWorld& world);
 
     FrameBuffer background_;
+    FrameBuffer cabinBackground_; // 小屋室内：一次性烘焙，每帧按相机拷贝
     FrameBuffer farmLayer_;
     RectI farmBakeRect_{};
     std::uint64_t bakedFarmVersion_ = 0;

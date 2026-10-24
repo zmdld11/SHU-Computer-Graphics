@@ -21,7 +21,7 @@ struct Crop {
     bool watered = false;
 };
 
-enum class HoverKind { None, Cell, Plot, Pond };
+enum class HoverKind { None, Cell, Plot, Pond, Door, Bed };
 
 struct Hover {
     HoverKind kind = HoverKind::None;
@@ -29,9 +29,15 @@ struct Hover {
     IPoint cell{};
 };
 
+// 场景：农场 ⇄ 小屋室内。切换有 0.5s 渐黑 + 0.5s 渐亮的转场。
+enum class GameScene { Farm, Cabin };
+
+// 转场类型：进屋/出屋/睡觉（睡觉在中点把时间跳到次日早晨）。
+enum class SceneTransition { None, ToCabin, ToFarm, Sleep };
+
 // 走到目标后要执行的动作。点击只记"想去哪/想做什么"，到位再落地，
 // 这样寻路与交互解耦，路径被水挡住时也只会走到能走到的格。
-enum class PendingKind { None, Plot, Pond };
+enum class PendingKind { None, Plot, Pond, Enter, Sleep, Exit };
 
 struct Pending {
     PendingKind kind = PendingKind::None;
@@ -151,6 +157,10 @@ public:
     float hour() const { return dayTime_ * 24.0f / kDayLength; }
     int day() const { return day_; }
 
+    // 场景与转场：fadeAlpha 供渲染层画渐黑渐亮（0 全显 → 1 全黑）。
+    GameScene scene() const { return scene_; }
+    float fadeAlpha() const;
+
     // 钓鱼：状态、鱼漂位置与抛竿控制点（渲染要画线/漂）、计划好的等待时长（测试用）。
     FishState fishState() const { return fishState_; }
     FPoint bobberPos() const { return bobberPos_; }
@@ -173,8 +183,17 @@ public:
     void debugAddInventory(int kind, int count);
     // 直接把时刻拨到指定小时（测试/出图用），不影响天数。
     void debugSetTime(float hour);
+    // 直接把场景拨到室内（出图用）；正式流程走门交互的转场。
+    void debugEnterCabin();
 
 private:
+    // 场景感知的可行走判定：农场走格子规则，室内走房间规则。
+    bool walkable(int col, int row) const;
+    float worldWidth() const;
+    float worldHeight() const;
+    void startTransition(SceneTransition kind);
+    void applyTransitionSwitch();
+    void skipToMorning();
     bool cellsClearH(int row, int fromCol, int toCol) const;
     bool cellsClearV(int col, int fromRow, int toRow) const;
     bool tryLPath(IPoint from, IPoint to, bool horizontalFirst);
@@ -216,6 +235,11 @@ private:
 
     float dayTime_ = 70.0f; // 7:00 起床干活
     int day_ = 1;
+
+    GameScene scene_ = GameScene::Farm;
+    SceneTransition transition_ = SceneTransition::None;
+    float transitionT_ = 0.0f;
+    bool transitionSwitched_ = false;
 
     FishState fishState_ = FishState::Idle;
     float fishTimer_ = 0.0f;

@@ -117,6 +117,10 @@ void FarmWorld::reset() {
     playSeconds_ = 0.0f;
     dayTime_ = 70.0f;
     day_ = 1;
+    scene_ = GameScene::Farm;
+    transition_ = SceneTransition::None;
+    transitionT_ = 0.0f;
+    transitionSwitched_ = false;
     fishState_ = FishState::Idle;
     fishTimer_ = 0.0f;
     fishWait_ = 0.0f;
@@ -124,6 +128,95 @@ void FarmWorld::reset() {
     fishRng_ = 0x9E3779B9u;
     particles_.clear();
     farmVersion_++;
+    cameraReady_ = false;
+    updateCamera(0.0f, true);
+}
+
+// ---- 场景与昼夜的共用小工具 ----
+
+bool FarmWorld::walkable(int col, int row) const {
+    return scene_ == GameScene::Farm ? isWalkableCell(col, row)
+                                     : cabinWalkableCell(col, row);
+}
+
+float FarmWorld::worldWidth() const {
+    return scene_ == GameScene::Farm ? static_cast<float>(kWorldW)
+                                     : static_cast<float>(kRoomW);
+}
+
+float FarmWorld::worldHeight() const {
+    return scene_ == GameScene::Farm ? static_cast<float>(kWorldH)
+                                     : static_cast<float>(kRoomH);
+}
+
+float FarmWorld::fadeAlpha() const {
+    if (transition_ == SceneTransition::None) {
+        return 0.0f;
+    }
+    const float t = std::clamp(transitionT_, 0.0f, 1.0f);
+    return t < 0.5f ? t * 2.0f : (1.0f - t) * 2.0f;
+}
+
+void FarmWorld::startTransition(SceneTransition kind) {
+    if (transition_ != SceneTransition::None) {
+        return;
+    }
+    transition_ = kind;
+    transitionT_ = 0.0f;
+    transitionSwitched_ = false;
+    waypoints_.clear();
+    waypointIndex_ = 0;
+    moving_ = false;
+    pending_ = Pending{};
+    hover_ = Hover{};
+}
+
+void FarmWorld::skipToMorning() {
+    // 从当前时刻跳到次日 7:00：作物按跳过的秒数一次性生长（过夜不再保水）。
+    float skippedHours = 31.0f - hour(); // 24 - h + 7
+    if (skippedHours < 0.0f) {
+        skippedHours += 24.0f;
+    }
+    const float skipped = skippedHours * kDayLength / 24.0f;
+    for (std::size_t i = 0; i < plots_.size(); ++i) {
+        Crop& c = plots_[i];
+        if (c.stage != CropStage::Seed && c.stage != CropStage::Sprout) {
+            continue;
+        }
+        c.age += skipped;
+        if (c.stage == CropStage::Seed && c.age >= 6.0f) {
+            c.stage = CropStage::Sprout;
+        }
+        if (c.stage == CropStage::Sprout && c.age >= 14.0f) {
+            c.stage = CropStage::Mature;
+        }
+        c.watered = false;
+    }
+    ++day_;
+    dayTime_ = 7.0f * kDayLength / 24.0f;
+    markFarmChanged();
+}
+
+void FarmWorld::applyTransitionSwitch() {
+    switch (transition_) {
+    case SceneTransition::ToCabin:
+        scene_ = GameScene::Cabin;
+        playerPos_ = cellCenterF(kCabinDoorCol, kCabinDoorRow);
+        break;
+    case SceneTransition::ToFarm:
+        scene_ = GameScene::Farm;
+        playerPos_ = cellCenterF(kCabinFrontCol, kCabinFrontRow);
+        break;
+    case SceneTransition::Sleep:
+        skipToMorning();
+        break;
+    case SceneTransition::None:
+        return;
+    }
+    waypoints_.clear();
+    waypointIndex_ = 0;
+    moving_ = false;
+    hover_ = Hover{};
     cameraReady_ = false;
     updateCamera(0.0f, true);
 }
@@ -153,6 +246,20 @@ void FarmWorld::update(float dt) {
     }
     updateCrops(dt);
     updateFishing(dt);
+
+    // 转场：前半程渐黑，中点切场景/跳时间，后半程渐亮；期间角色冻结。
+    if (transition_ != SceneTransition::None) {
+        transitionT_ += dt;
+        if (!transitionSwitched_ && transitionT_ >= 0.5f) {
+            transitionSwitched_ = true;
+            applyTransitionSwitch();
+        }
+        if (transitionT_ >= 1.0f) {
+            transition_ = SceneTransition::None;
+        }
+        updateCamera(dt, false);
+        return;
+    }
 
     // 钓鱼进行中锁定移动，防止"边跑边钓"。
     const bool fishing = fishState_ != FishState::Idle;
@@ -292,15 +399,43 @@ void FarmWorld::updateParticles(float dt) {
 
 void FarmWorld::onHover(FPoint worldPos) {
     hover_ = Hover{};
-    if (worldPos.x < 0.0f || worldPos.y < 0.0f || worldPos.x >= kWorldW ||
-        worldPos.y >= kWorldH) {
+    if (worldPos.x < 0.0f || worldPos.y < 0.0f || worldPos.x >= worldWidth() ||
+        worldPos.y >= worldHeight()) {
+        return;
+    }
+
+    // 室内：床/地垫/普通地面三种悬停。
+    if (scene_ == GameScene::Cabin) {
+        const IPoint c = cellOf(worldPos);
+        if (c.x >= 4 && c.x <= 7 && c.y >= 3 && c.y <= 8) {
+            hover_.kind = HoverKind::Bed;
+            hover_.cell = {kCabinBedSideCol, kCabinBedSideRow};
+            return;
+        }
+        if (c.y >= 15 && c.y <= 18 && c.x >= 11 && c.x <= 13) {
+            hover_.kind = HoverKind::Door;
+            hover_.cell = {kCabinDoorCol, kCabinDoorRow};
+            return;
+        }
+        if (walkable(c.x, c.y)) {
+            hover_.kind = HoverKind::Cell;
+            hover_.cell = c;
+        }
+        return;
+    }
+
+    // 农场：悬停小屋 → 进屋提示。
+    if (worldPos.x >= kCabinX && worldPos.x < kCabinX + kCabinW &&
+        worldPos.y >= kCabinY && worldPos.y < kCabinY + kCabinH + 24.0f) {
+        hover_.kind = HoverKind::Door;
+        hover_.cell = {kCabinFrontCol, kCabinFrontRow};
         return;
     }
 
     const int plot = plotIndexAtPoint(worldPos);
     if (plot >= 0) {
         const IPoint c = plotCenterCell(plot);
-        if (isWalkableCell(c.x, c.y)) {
+        if (walkable(c.x, c.y)) {
             hover_.kind = HoverKind::Plot;
             hover_.plot = plot;
             hover_.cell = c;
@@ -315,7 +450,7 @@ void FarmWorld::onHover(FPoint worldPos) {
     }
 
     const IPoint c = cellOf(worldPos);
-    if (isWalkableCell(c.x, c.y)) {
+    if (walkable(c.x, c.y)) {
         hover_.kind = HoverKind::Cell;
         hover_.cell = c;
     }
@@ -326,8 +461,58 @@ void FarmWorld::clearHover() {
 }
 
 void FarmWorld::onClick(FPoint worldPos) {
-    if (worldPos.x < 0.0f || worldPos.y < 0.0f || worldPos.x >= kWorldW ||
-        worldPos.y >= kWorldH || won_) {
+    if (worldPos.x < 0.0f || worldPos.y < 0.0f || worldPos.x >= worldWidth() ||
+        worldPos.y >= worldHeight() || won_ ||
+        transition_ != SceneTransition::None) {
+        return;
+    }
+
+    // 室内：点床睡觉、点地垫出门、其余走格。
+    if (scene_ == GameScene::Cabin) {
+        const IPoint c = cellOf(worldPos);
+        if (c.x >= 4 && c.x <= 7 && c.y >= 3 && c.y <= 8) {
+            pending_ = Pending{PendingKind::Sleep, -1};
+            buildPath(cellOf(playerPos_), {kCabinBedSideCol, kCabinBedSideRow});
+            if (!moving_) {
+                onArrived();
+            }
+            return;
+        }
+        if (c.y >= 15 && c.y <= 18 && c.x >= 11 && c.x <= 13) {
+            pending_ = Pending{PendingKind::Exit, -1};
+            buildPath(cellOf(playerPos_), {kCabinDoorCol, kCabinDoorRow});
+            if (!moving_) {
+                onArrived();
+            }
+            return;
+        }
+        if (walkable(c.x, c.y)) {
+            pending_ = Pending{};
+            const IPoint start = cellOf(playerPos_);
+            if (start.x == c.x && start.y == c.y) {
+                return;
+            }
+            buildPath(start, c);
+        }
+        return;
+    }
+
+    // 农场：点小屋 → 走到门前进屋。
+    if (worldPos.x >= kCabinX && worldPos.x < kCabinX + kCabinW &&
+        worldPos.y >= kCabinY && worldPos.y < kCabinY + kCabinH + 24.0f) {
+        if (fishState_ != FishState::Idle) {
+            return;
+        }
+        pending_ = Pending{PendingKind::Enter, -1};
+        const IPoint start = cellOf(playerPos_);
+        if (start.x == kCabinFrontCol && start.y == kCabinFrontRow) {
+            onArrived();
+            return;
+        }
+        buildPath(start, {kCabinFrontCol, kCabinFrontRow});
+        if (!moving_ && pending_.kind != PendingKind::None) {
+            onArrived();
+        }
         return;
     }
 
@@ -368,7 +553,7 @@ void FarmWorld::onClick(FPoint worldPos) {
             target = {kDockTipCol, kDockTipRow};
             hover_.kind = HoverKind::Pond;
             hover_.cell = target;
-        } else if (isWalkableCell(target.x, target.y)) {
+        } else if (walkable(target.x, target.y)) {
             hover_.kind = HoverKind::Cell;
             hover_.plot = -1;
             hover_.cell = target;
@@ -378,7 +563,7 @@ void FarmWorld::onClick(FPoint worldPos) {
         }
     }
 
-    if (!isWalkableCell(target.x, target.y)) {
+    if (!walkable(target.x, target.y)) {
         hover_ = Hover{};
         return;
     }
@@ -413,14 +598,27 @@ void FarmWorld::onClick(FPoint worldPos) {
 void FarmWorld::onArrived() {
     const Pending p = pending_;
     pending_ = Pending{};
-    if (p.kind == PendingKind::Plot) {
+    switch (p.kind) {
+    case PendingKind::Plot:
         interactPlot(p.plot);
-    } else if (p.kind == PendingKind::Pond) {
+        break;
+    case PendingKind::Pond:
         // 只有站上栈道尽头才抛竿。
-        const IPoint c = cellOf(playerPos_);
-        if (c.x == kDockTipCol && c.y == kDockTipRow) {
+        if (cellOf(playerPos_).x == kDockTipCol && cellOf(playerPos_).y == kDockTipRow) {
             startCasting();
         }
+        break;
+    case PendingKind::Enter:
+        startTransition(SceneTransition::ToCabin);
+        break;
+    case PendingKind::Sleep:
+        startTransition(SceneTransition::Sleep);
+        break;
+    case PendingKind::Exit:
+        startTransition(SceneTransition::ToFarm);
+        break;
+    case PendingKind::None:
+        break;
     }
 }
 
@@ -537,7 +735,7 @@ void FarmWorld::selectSeed(int index) {
 bool FarmWorld::cellsClearH(int row, int fromCol, int toCol) const {
     const int step = toCol >= fromCol ? 1 : -1;
     for (int c = fromCol;; c += step) {
-        if (!isWalkableCell(c, row)) {
+        if (!walkable(c, row)) {
             return false;
         }
         if (c == toCol) {
@@ -550,7 +748,7 @@ bool FarmWorld::cellsClearH(int row, int fromCol, int toCol) const {
 bool FarmWorld::cellsClearV(int col, int fromRow, int toRow) const {
     const int step = toRow >= fromRow ? 1 : -1;
     for (int r = fromRow;; r += step) {
-        if (!isWalkableCell(col, r)) {
+        if (!walkable(col, r)) {
             return false;
         }
         if (r == toRow) {
@@ -610,7 +808,7 @@ bool FarmWorld::tryBfsPath(IPoint from, IPoint to) {
         }
         for (const auto& d : dirs) {
             const IPoint next{cur.x + d[0], cur.y + d[1]};
-            if (!isWalkableCell(next.x, next.y)) {
+            if (!walkable(next.x, next.y)) {
                 continue;
             }
             const int ni = indexOf(next);
@@ -658,7 +856,7 @@ void FarmWorld::buildPath(IPoint start, IPoint goalCell) {
     waypointIndex_ = 0;
     moving_ = false;
 
-    if (!isWalkableCell(goalCell.x, goalCell.y)) {
+    if (!walkable(goalCell.x, goalCell.y)) {
         return;
     }
 
@@ -691,8 +889,8 @@ void FarmWorld::buildPath(IPoint start, IPoint goalCell) {
 }
 
 void FarmWorld::updateCamera(float dt, bool snap) {
-    const float maxX = std::max(0.0f, static_cast<float>(kWorldW) - viewW_);
-    const float maxY = std::max(0.0f, static_cast<float>(kWorldH) - viewH_);
+    const float maxX = std::max(0.0f, worldWidth() - viewW_);
+    const float maxY = std::max(0.0f, worldHeight() - viewH_);
     const float targetX =
         std::clamp(playerPos_.x - viewW_ * 0.5f, 0.0f, maxX);
     const float targetY =
@@ -734,6 +932,19 @@ void FarmWorld::debugSetPlayerCell(int col, int row) {
 void FarmWorld::debugSetTime(float hour) {
     hour = std::fmod(hour + 24.0f, 24.0f);
     dayTime_ = hour * kDayLength / 24.0f;
+}
+
+void FarmWorld::debugEnterCabin() {
+    scene_ = GameScene::Cabin;
+    transition_ = SceneTransition::None;
+    playerPos_ = cellCenterF(kCabinDoorCol, kCabinDoorRow);
+    waypoints_.clear();
+    waypointIndex_ = 0;
+    moving_ = false;
+    pending_ = Pending{};
+    hover_ = Hover{};
+    cameraReady_ = false;
+    updateCamera(0.0f, true);
 }
 
 void FarmWorld::debugAddInventory(int kind, int count) {

@@ -282,6 +282,57 @@ int runFarmChecks() {
     world.reset();
     world.setViewport(800, 600);
 
+    // ---- 场景切换（#72）----
+    expect(cabinWalkableCell(kCabinDoorCol, kCabinDoorRow), "cabin: 门垫可行走");
+    expect(!cabinWalkableCell(5, 5), "cabin: 床位不可穿行");
+    expect(!cabinWalkableCell(0, 8), "cabin: 侧墙不可穿行");
+
+    // 点小屋 → 走到门前格 → 转场进室内，落在门垫上
+    world.debugSetPlayerCell(kSpawnCol, kSpawnRow);
+    world.onClick({kCabinDoorX, kCabinDoorY + 10.0f});
+    expect(world.pending().kind == PendingKind::Enter, "cabin: 点小屋记进门意图");
+    expect(nearPoint(world.goal(), cellCenterF(kCabinFrontCol, kCabinFrontRow)),
+           "cabin: 目标为门前格");
+    runFor(5.0f);
+    expect(world.scene() == GameScene::Cabin || world.fadeAlpha() > 0.0f,
+           "cabin: 到位触发转场");
+    runFor(1.2f);
+    expect(world.scene() == GameScene::Cabin, "cabin: 转场后进入室内");
+    expect(nearPoint(world.playerPos(), cellCenterF(kCabinDoorCol, kCabinDoorRow)),
+           "cabin: 进屋落在门垫");
+
+    // 室内路径不穿家具
+    world.onClick({20 * kCell + 16.0f, 13 * kCell + 16.0f});
+    bool cabinPathOk = !world.waypoints().empty();
+    for (const FPoint& p : world.waypoints()) {
+        const IPoint c = cellOf(p);
+        if (!cabinWalkableCell(c.x, c.y)) {
+            cabinPathOk = false;
+        }
+    }
+    expect(cabinPathOk, "cabin: 室内路径不穿家具");
+    runFor(3.0f);
+
+    // 点床睡觉：转场后次日 7:00，作物按跳过的秒数长了一夜
+    world.debugPlant(0, Seed::Tomato, CropStage::Seed, false);
+    world.debugSetTime(22.0f);
+    world.onClick({5 * kCell + 16.0f, 5 * kCell + 16.0f}); // 床 now 在左侧 4-7 列
+    expect(world.pending().kind == PendingKind::Sleep, "cabin: 点床记睡觉意图");
+    runFor(4.5f);
+    expect(world.day() == 2, "cabin: 睡醒进入第二天");
+    expect(world.hour() > 6.9f && world.hour() < 7.5f, "cabin: 醒来是早晨 7 点");
+    expect(world.crop(0).stage == CropStage::Mature, "cabin: 作物长了一夜成熟");
+
+    // 点地垫出门：回到农场门前格
+    world.onClick({kCabinDoorCol * kCell + 16.0f, kCabinDoorRow * kCell + 16.0f});
+    expect(world.pending().kind == PendingKind::Exit, "cabin: 点地垫记出门意图");
+    runFor(5.0f);
+    expect(world.scene() == GameScene::Farm, "cabin: 出门回到农场");
+    expect(nearPoint(world.playerPos(), cellCenterF(kCabinFrontCol, kCabinFrontRow)),
+           "cabin: 出门落在屋前格");
+    world.reset();
+    world.setViewport(800, 600);
+
     std::cout << (fails == 0 ? "farm checks passed" : "farm checks FAILED") << std::endl;
     return fails;
 }

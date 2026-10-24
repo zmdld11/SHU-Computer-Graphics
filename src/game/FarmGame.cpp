@@ -217,9 +217,23 @@ bool writeFarmCapture() {
         }
     }
 
+    // 场景切换验证：小屋室内白天/深夜各一张（窗户天色与夜色随时刻变）。
+    world.debugEnterCabin();
+    world.debugSetTime(12.5f);
+    render.frame(view, world, true);
+    if (!cg::writePPM("game-cabin-day.ppm", view)) {
+        return false;
+    }
+    world.debugSetTime(23.0f);
+    render.frame(view, world, true);
+    if (!cg::writePPM("game-cabin-night.ppm", view)) {
+        return false;
+    }
+
     std::cout << "[game] 已写出 game-background.ppm / game-layer-1..6.ppm / "
                  "game-world.ppm / game-pond.ppm / game-farm.ppm / "
-                 "game-day-0612|1230|1748 / game-night-2300.ppm"
+                 "game-day-0612|1230|1748 / game-night-2300.ppm / "
+                 "game-cabin-day|night.ppm"
               << std::endl;
     return true;
 }

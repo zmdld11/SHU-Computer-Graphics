@@ -78,6 +78,55 @@ constexpr int kDockTipRow = kDockRow + kDockRows - 1;
 constexpr int kSpawnCol = 20;
 constexpr int kSpawnRow = 20;
 
+// ---- 小屋（场景切换）----
+// 农场北面草地上的木屋：外观是静态装饰，门前那格是进屋的交互点。
+constexpr float kCabinX = 700.0f;
+constexpr float kCabinY = 130.0f;
+constexpr float kCabinW = 300.0f;
+constexpr float kCabinH = 190.0f;
+constexpr float kCabinDoorX = kCabinX + kCabinW * 0.5f; // 850
+constexpr float kCabinDoorY = kCabinY + kCabinH;        // 320
+
+// 农场侧：站在门前格（屋门正下方）即可进屋。
+constexpr int kCabinFrontCol = 26;
+constexpr int kCabinFrontRow = 10;
+
+// 室内场景：25×19 格（800×608），单屏基本无滚动。行 0-1 顶墙、17-18 底墙、
+// 列 0/24 侧墙；家具（床/储物箱/桌）不可穿行，底墙开口是出门的地垫。
+constexpr int kCabinCols = 25;
+constexpr int kCabinRows = 19;
+constexpr int kRoomW = kCabinCols * kCell;
+constexpr int kRoomH = kCabinRows * kCell;
+constexpr int kCabinDoorCol = 12; // 地垫中心格：站上去点地垫出门
+constexpr int kCabinDoorRow = 16;
+
+inline bool inCabinFloor(int col, int row) {
+    return col >= 1 && col <= 23 && row >= 2 && row <= 16;
+}
+
+// 家具占格：床(4-7, 3-8)、储物箱(19-21, 3-5)、桌子(8-10, 2-3)。
+// 床放在左半屏，避免被右上角的订单板 HUD 挡住。
+inline bool inCabinFurniture(int col, int row) {
+    if (col >= 4 && col <= 7 && row >= 3 && row <= 8) {
+        return true;
+    }
+    if (col >= 19 && col <= 21 && row >= 3 && row <= 5) {
+        return true;
+    }
+    if (col >= 8 && col <= 10 && row >= 2 && row <= 3) {
+        return true;
+    }
+    return false;
+}
+
+inline bool cabinWalkableCell(int col, int row) {
+    return inCabinFloor(col, row) && !inCabinFurniture(col, row);
+}
+
+// 床沿交互点：床右侧那格，站上去点床睡觉。
+constexpr int kCabinBedSideCol = 8;
+constexpr int kCabinBedSideRow = 5;
+
 // 订单需求：3 白菜 + 3 番茄 + 2 胡萝卜 + 3 鱼，集齐即胜利。
 constexpr int kOrderCabbage = 3;
 constexpr int kOrderTomato = 3;
