@@ -1,10 +1,12 @@
 // FarmWorld.hpp
-// 胖龙农场的纯玩法层：格点移动、镜头、农田状态。不 include raster/ui，可无窗口自测。
+// 胖龙农场的纯玩法层：格点移动、镜头、农田状态、钓鱼状态机、订单与库存、粒子池。
+// 不 include raster/ui，可无窗口自测。
 #pragma once
 #include "game/FarmLayout.hpp"
 
 #include <array>
 #include <cstddef>
+#include <cstdint>
 #include <vector>
 
 namespace cg::game {
@@ -27,10 +29,64 @@ struct Hover {
     IPoint cell{};
 };
 
+// 走到目标后要执行的动作。点击只记"想去哪/想做什么"，到位再落地，
+// 这样寻路与交互解耦，路径被水挡住时也只会走到能走到的格。
+enum class PendingKind { None, Plot, Pond };
+
+struct Pending {
+    PendingKind kind = PendingKind::None;
+    int plot = -1;
+};
+
+// 钓鱼状态机（设计稿 §7.2）。
+enum class FishState { Idle, Casting, Waiting, Biting, Caught, Missed };
+
+// 库存：四种物品的计数器。种子无限，不进库存。
+struct Inventory {
+    int cabbage = 0;
+    int tomato = 0;
+    int carrot = 0;
+    int fish = 0;
+
+    int& slot(Seed kind) {
+        switch (kind) {
+        case Seed::Tomato: return tomato;
+        case Seed::Carrot: return carrot;
+        default: return cabbage;
+        }
+    }
+    const int& slot(Seed kind) const {
+        switch (kind) {
+        case Seed::Tomato: return tomato;
+        case Seed::Carrot: return carrot;
+        default: return cabbage;
+        }
+    }
+    bool meetsOrder() const {
+        return cabbage >= kOrderCabbage && tomato >= kOrderTomato &&
+               carrot >= kOrderCarrot && fish >= kOrderFish;
+    }
+};
+
+// 粒子类型：逻辑层只推进位置/寿命，画法由渲染层按类型决定。
+enum class ParticleType { Droplet, Ring, Sparkle };
+
+struct Particle {
+    FPoint pos{};
+    FPoint vel{};
+    float life = 0.0f;
+    float maxLife = 1.0f;
+    ParticleType type = ParticleType::Droplet;
+};
+
 // 一局游戏的逻辑状态。移动以 32px 格为最小单位，角色最终一定停在格心。
 class FarmWorld {
 public:
     static constexpr float kPlayerSpeed = 220.0f;
+    static constexpr float kCastTime = 0.5f;
+    static constexpr float kBiteWindow = 0.8f;
+    static constexpr float kFishTailTime = 1.0f;
+    static constexpr int kMaxParticles = 256;
 
     FarmWorld();
 
@@ -56,14 +112,32 @@ public:
     const Hover& hover() const { return hover_; }
     const Crop& crop(int index) const { return plots_[static_cast<std::size_t>(index)]; }
 
+    // 玩法状态：农田层版本号（渲染层据此重烘农田）、库存、订单、用时。
+    std::uint64_t farmVersion() const { return farmVersion_; }
+    const Inventory& inventory() const { return inventory_; }
+    bool won() const { return won_; }
+    float playSeconds() const { return playSeconds_; }
+
+    // 钓鱼：状态、鱼漂位置与抛竿控制点（渲染要画线/漂）、计划好的等待时长（测试用）。
+    FishState fishState() const { return fishState_; }
+    FPoint bobberPos() const { return bobberPos_; }
+    FPoint bobberCtrl() const { return bobberCtrl_; }
+    float fishWaitSeconds() const { return fishWait_; }
+
+    // 粒子池（渲染层按类型绘制）。
+    const std::vector<Particle>& particles() const { return particles_; }
+
     // 只读访问器：给 --game-smoke 验证路径与目标，玩法本身不用。
     const std::vector<FPoint>& waypoints() const { return waypoints_; }
     std::size_t waypointIndex() const { return waypointIndex_; }
     FPoint goal() const { return waypoints_.empty() ? playerPos_ : waypoints_.back(); }
+    const Pending& pending() const { return pending_; }
 
-    // 预览图用：直接摆一块田/把角色放到指定格，不影响正常流程。
+    // 预览图/测试用：直接摆一块田/把角色放到指定格，不影响正常流程。
     void debugPlant(int plotIndex, Seed kind, CropStage stage, bool watered = false);
     void debugSetPlayerCell(int col, int row);
+    // kind：0/1/2 = 三种作物，3 = 鱼。测试订单胜利用。
+    void debugAddInventory(int kind, int count);
 
 private:
     bool cellsClearH(int row, int fromCol, int toCol) const;
@@ -72,6 +146,15 @@ private:
     bool tryBfsPath(IPoint from, IPoint to);
     void buildPath(IPoint start, IPoint goalCell);
     void updateCamera(float dt, bool snap);
+    void updateCrops(float dt);
+    void updateFishing(float dt);
+    void updateParticles(float dt);
+    void onArrived();
+    void interactPlot(int plotIndex);
+    void startCasting();
+    void addParticles(ParticleType type, FPoint pos, int count);
+    std::uint32_t nextRand();
+    void markFarmChanged() { ++farmVersion_; }
 
     FPoint playerPos_{};
     FPoint camera_{};
@@ -89,6 +172,24 @@ private:
     std::array<Crop, kPlotCols * kPlotRows> plots_{};
     Seed selectedSeed_ = Seed::Cabbage;
     Hover hover_{};
+    Pending pending_{};
+    std::uint64_t farmVersion_ = 0;
+
+    Inventory inventory_{};
+    bool won_ = false;
+    float playSeconds_ = 0.0f;
+
+    FishState fishState_ = FishState::Idle;
+    float fishTimer_ = 0.0f;
+    float fishWait_ = 0.0f;
+    FPoint bobberStart_{};
+    FPoint bobberCtrl_{};
+    FPoint bobberTarget_{};
+    FPoint bobberPos_{};
+    float rippleTimer_ = 0.0f;
+    std::uint32_t fishRng_ = 0x9E3779B9u;
+
+    std::vector<Particle> particles_;
 };
 
 } // namespace cg::game

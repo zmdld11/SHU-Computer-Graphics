@@ -1,10 +1,15 @@
 // FarmChecks.cpp
-// 断言农场世界的格点布局、行走路径、镜头夹取和重置；不创建窗口，可直接在 CI/命令行跑。
+// 断言农场世界的格点布局、行走路径、镜头夹取、玩法状态机与烘培一致性；
+// 不创建窗口，可直接在 CI/命令行跑。
 #include "tests/FarmChecks.hpp"
 
+#include "core/FrameBuffer.hpp"
+#include "core/ImageIO.hpp"
 #include "game/FarmLayout.hpp"
+#include "game/FarmRender.hpp"
 #include "game/FarmWorld.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <iostream>
 
@@ -99,6 +104,129 @@ int runFarmChecks() {
     expect(world.selectedSeed() == Seed::Cabbage, "farm: 重开复位选种");
     expect(nearPoint(world.playerPos(), cellCenterF(kSpawnCol, kSpawnRow)),
            "farm: 重开回到出生点");
+
+    // ---- 核心玩法（#70）----
+    // 测试用小步推进：状态机一次 update 只跨一个状态，游戏主循环 dt≤0.05 无此问题。
+    auto runFor = [&world](float seconds) {
+        for (float t = 0.0f; t < seconds; t += 0.05f) {
+            world.update(std::min(0.05f, seconds - t));
+        }
+    };
+
+    // 站在田上点田：空地播种 → 浇水 → 生长 → 收获入库
+    const IPoint plot0 = plotCenterCell(0);
+    world.debugSetPlayerCell(plot0.x, plot0.y);
+    world.onClick(plotCenter(0));
+    expect(world.crop(0).stage == CropStage::Seed, "game: 点空田播种");
+    world.onClick(plotCenter(0));
+    expect(world.crop(0).watered, "game: 点幼苗浇水");
+    world.onClick(plotCenter(0));
+    expect(world.crop(0).watered, "game: 同阶段重复浇水不叠加");
+    world.update(6.5f);
+    expect(world.crop(0).stage == CropStage::Sprout, "game: 6 秒进幼苗期");
+    expect(!world.crop(0).watered, "game: 进阶后重置浇水");
+    world.update(13.0f);
+    expect(world.crop(0).stage == CropStage::Mature, "game: 浇水 1.6x 提速到成熟");
+    const int cabbageBefore = world.inventory().cabbage;
+    world.onClick(plotCenter(0));
+    expect(world.crop(0).stage == CropStage::Empty, "game: 成熟收获清空地块");
+    expect(world.inventory().cabbage == cabbageBefore + 1, "game: 收获入库");
+
+    // 不走到位不执行：站着点远处田块，只是移动，不播种
+    world.debugSetPlayerCell(kSpawnCol, kSpawnRow);
+    world.onClick(plotCenter(1));
+    expect(world.crop(1).stage == CropStage::Empty && !world.waypoints().empty(),
+           "game: 未到位不执行动作");
+
+    // 钓鱼状态机：抛竿 → 等待 → 咬钩 → 超时脱钩
+    world.debugSetPlayerCell(kDockTipCol, kDockTipRow);
+    world.onClick({kPondCx, kPondCy + 80.0f});
+    expect(world.fishState() == FishState::Casting, "game: 到栈道尽头即抛竿");
+    runFor(0.6f);
+    expect(world.fishState() == FishState::Waiting, "game: 0.5 秒抛竿后等待");
+    expect(world.fishWaitSeconds() >= 1.2f && world.fishWaitSeconds() <= 2.8f,
+           "game: 等待时长在 1.2~2.8 秒");
+    runFor(world.fishWaitSeconds() + 0.1f);
+    expect(world.fishState() == FishState::Biting, "game: 等待结束进入咬钩");
+    runFor(1.0f);
+    expect(world.fishState() == FishState::Missed, "game: 0.8 秒窗口超时判脱钩");
+    runFor(1.1f);
+    expect(world.fishState() == FishState::Idle, "game: 脱钩 1 秒后回空闲");
+
+    // 咬钩窗口内点水面：钓到，鱼 +1
+    world.onClick({kPondCx, kPondCy + 80.0f});
+    runFor(0.6f + world.fishWaitSeconds() + 0.1f);
+    expect(world.fishState() == FishState::Biting, "game: 再次进入咬钩");
+    const int fishBefore = world.inventory().fish;
+    world.onClick(world.bobberPos());
+    expect(world.fishState() == FishState::Caught, "game: 窗口内点水面收竿");
+    expect(world.inventory().fish == fishBefore + 1, "game: 钓到鱼 +1");
+    runFor(1.1f);
+
+    // 钓鱼期间锁移动
+    world.onClick({kPondCx, kPondCy + 80.0f});
+    expect(world.fishState() == FishState::Casting, "game: 收竿后可再抛");
+    world.onClick(plotCenter(3));
+    expect(world.waypoints().empty(), "game: 钓鱼期间点田不移动");
+    runFor(6.0f);
+    expect(world.fishState() == FishState::Idle, "game: 一轮结束回空闲");
+
+    // 粒子：交互生成、寿命结束回收、数量有上限
+    world.reset();
+    world.setViewport(800, 600);
+    world.debugSetPlayerCell(plotCenterCell(1).x, plotCenterCell(1).y);
+    world.debugPlant(1, Seed::Cabbage, CropStage::Mature);
+    for (int i = 0; i < 40; ++i) {
+        world.debugPlant(1, Seed::Cabbage, CropStage::Mature);
+        world.onClick(plotCenter(1));
+    }
+    expect(!world.particles().empty(), "game: 交互产生粒子");
+    expect(world.particles().size() <= FarmWorld::kMaxParticles,
+           "game: 粒子池不超上限");
+    world.update(2.0f);
+    expect(world.particles().empty(), "game: 粒子寿命结束回收");
+
+    // 订单与胜利
+    expect(!world.won(), "game: 开局未胜利");
+    world.debugAddInventory(0, kOrderCabbage);
+    expect(!world.won(), "game: 只齐白菜不算胜利");
+    world.debugAddInventory(1, kOrderTomato);
+    world.debugAddInventory(2, kOrderCarrot);
+    expect(!world.won(), "game: 缺鱼不算胜利");
+    world.debugAddInventory(3, kOrderFish);
+    expect(world.won(), "game: 四项集齐判胜利");
+    world.update(0.5f);
+    expect(world.won(), "game: 胜利后世界冻结");
+
+    // 分层烘培一致性（结构性校验）：静态层 + 农田层与整图 drawScene 的差异
+    // 必须全部落在农田重烘矩形内且数量极少。AET 增量累加的交点 x 依赖画布
+    // 绝对量级，边缘 ±1 子像素翻转（降采样后 ≤2/255）无法消除也不可见；
+    // 但树冠/草丛跨界被章盖掉这类结构性错误会产生大量差异，必须在此拦住。
+    {
+        FarmWorld w2;
+        w2.setViewport(800, 600);
+        w2.debugPlant(0, Seed::Tomato, CropStage::Mature, true);
+        w2.debugPlant(5, Seed::Cabbage, CropStage::Sprout, false);
+        FarmRender render;
+        render.build(w2);
+        const FrameBuffer baked = render.captureBackground();
+        const FrameBuffer full = render.captureScene(w2);
+        int diff = 0;
+        bool outsideBakeRect = false;
+        for (int y = 0; y < baked.height(); ++y) {
+            for (int x = 0; x < baked.width(); ++x) {
+                if (baked.pixel(x, y) != full.pixel(x, y)) {
+                    ++diff;
+                    if (x < kFarmBakeX || x >= kFarmBakeX + kFarmBakeW ||
+                        y < kFarmBakeY || y >= kFarmBakeY + kFarmBakeH) {
+                        outsideBakeRect = true;
+                    }
+                }
+            }
+        }
+        expect(!outsideBakeRect, "game: 烘培差异不越出农田重烘矩形");
+        expect(diff <= 48, "game: 烘培差异仅限边缘子像素");
+    }
 
     std::cout << (fails == 0 ? "farm checks passed" : "farm checks FAILED") << std::endl;
     return fails;

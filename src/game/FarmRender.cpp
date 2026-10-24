@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <iterator>
 #include <utility>
 #include <vector>
@@ -101,20 +102,27 @@ Color lerpColor(const Color& a, const Color& b, float t) {
     return Color{mix(a.r, b.r), mix(a.g, b.g), mix(a.b, b.b)};
 }
 
-// 带缩放的小画笔：世界坐标一律按设计尺寸写，2× 超采样只改 scale。
+// 带缩放与偏移的小画笔：世界坐标一律按设计尺寸写，2× 超采样只改 scale；
+// 偏移用于把一小块区域（农田层）单独烘到局部画布上，坐标不需要换算。
 class Painter {
 public:
-    Painter(FrameBuffer& fb, float scale) : fb_(fb), scale_(scale) {}
+    Painter(FrameBuffer& fb, float scale, FPoint offset = {0.0f, 0.0f})
+        : fb_(fb), scale_(scale), ox_(offset.x), oy_(offset.y) {}
 
-    int px(float v) const { return static_cast<int>(std::lround(v * scale_)); }
+    int px(float v) const {
+        return static_cast<int>(std::lround((v - ox_) * scale_));
+    }
+    int py(float v) const {
+        return static_cast<int>(std::lround((v - oy_) * scale_));
+    }
     FrameBuffer& fb() const { return fb_; }
-    Color sample(float x, float y) const { return fb_.pixel(px(x), px(y)); }
+    Color sample(float x, float y) const { return fb_.pixel(px(x), py(y)); }
 
     void rect(float x, float y, float w, float h, const Color& c) {
         if (w <= 0.0f || h <= 0.0f) {
             return;
         }
-        fb_.fillRect(px(x), px(y), px(x + w) - 1, px(y + h) - 1, c);
+        fb_.fillRect(px(x), py(y), px(x + w) - 1, py(y + h) - 1, c);
     }
 
     void line(float x0, float y0, float x1, float y1, const Color& c, float width = 1.0f) {
@@ -122,7 +130,7 @@ public:
         if ((w & 1) == 0) {
             ++w;
         }
-        raster::drawLine(fb_, {px(x0), px(y0)}, {px(x1), px(y1)}, c, {0xFFFFu, w});
+        raster::drawLine(fb_, {px(x0), py(y0)}, {px(x1), py(y1)}, c, {0xFFFFu, w});
     }
 
     void rectOutline(float x, float y, float w, float h, const Color& c, float width) {
@@ -141,7 +149,7 @@ public:
         pts.reserve(static_cast<std::size_t>(n));
         for (int i = 0; i < n; ++i) {
             const float a = 2.0f * kPi * static_cast<float>(i) / static_cast<float>(n);
-            pts.push_back({px(cx + rx * std::cos(a)), px(cy + ry * std::sin(a))});
+            pts.push_back({px(cx + rx * std::cos(a)), py(cy + ry * std::sin(a))});
         }
         raster::scanlineFillPolygon(fb_, pts, c);
     }
@@ -150,7 +158,7 @@ public:
     void ellipseGradient(float cx, float cy, float rx, float ry, const Color& shallow,
                          const Color& deep) {
         const int cxi = px(cx);
-        const int cyi = px(cy);
+        const int cyi = py(cy);
         const int rxi = px(rx);
         const int ryi = px(ry);
         if (rxi <= 0 || ryi <= 0) {
@@ -198,7 +206,7 @@ public:
         std::vector<IPoint> ip;
         ip.reserve(pts.size());
         for (const FPoint& p : pts) {
-            ip.push_back({px(p.x), px(p.y)});
+            ip.push_back({px(p.x), py(p.y)});
         }
         raster::scanlineFillPolygon(fb_, ip, fill);
         if (width > 0.0f) {
@@ -237,6 +245,8 @@ public:
 private:
     FrameBuffer& fb_;
     float scale_;
+    float ox_ = 0.0f;
+    float oy_ = 0.0f;
 };
 
 // ---------------- 草地、土路、农田 ----------------
@@ -556,18 +566,6 @@ void drawFarm(Painter& p, const FarmWorld& world) {
         drawGrassTuft(p, x + hashSigned(h, 0, 5.0f), static_cast<float>(kFarmY - 6), 0.75f,
                       kGrassDark);
     }
-
-    // 农田右侧一只木桶（纯装饰，不挡路）。
-    const float bx = 682.0f;
-    const float by = 598.0f;
-    p.ellipse(bx + 3.0f, by + 3.0f, 14.0f, 5.0f, kGrassDeep, 16);
-    const std::vector<FPoint> bucket = {{bx - 11.0f, by - 20.0f},
-                                        {bx + 11.0f, by - 20.0f},
-                                        {bx + 8.0f, by},
-                                        {bx - 8.0f, by}};
-    p.polygon(bucket, kWoodDark, kOutline, 1.5f);
-    p.ellipse(bx, by - 20.0f, 11.0f, 4.0f, kWood, 18);
-    p.arc(bx, by - 21.0f, 12.0f, 8.0f, 3.4f, 6.0f, kWoodLight, 1.5f, 12);
 }
 
 void drawPath(Painter& p) {
@@ -752,7 +750,10 @@ void drawPond(Painter& p) {
 // ---------------- 散落装饰与树林 ----------------
 
 bool meadowBlocked(float x, float y) {
-    return inFarmApron(x, y) || inPathArea(x, y) || inPond(x, y, 28.0f) || inDock(x, y);
+    // 农田动态层重烘范围（含外圈缓冲）内不放静态装饰：这块区域会被局部
+    // 重烘整片覆盖，跨界的装饰会在重烘后被凭空截断。
+    return nearFarmBakeRect(x, y) || inFarmApron(x, y) || inPathArea(x, y) ||
+           inPond(x, y, 28.0f) || inDock(x, y);
 }
 
 void drawMeadow(Painter& p) {
@@ -814,6 +815,18 @@ void drawMeadow(Painter& p) {
     for (const auto& b : bushes) {
         drawBush(p, b[0], b[1], b[2]);
     }
+
+    // 农田右下侧一只木桶（纯装饰，不挡路）。
+    const float bx = 682.0f;
+    const float by = 598.0f;
+    p.ellipse(bx + 3.0f, by + 3.0f, 14.0f, 5.0f, kGrassDeep, 16);
+    const std::vector<FPoint> bucket = {{bx - 11.0f, by - 20.0f},
+                                        {bx + 11.0f, by - 20.0f},
+                                        {bx + 8.0f, by},
+                                        {bx - 8.0f, by}};
+    p.polygon(bucket, kWoodDark, kOutline, 1.5f);
+    p.ellipse(bx, by - 20.0f, 11.0f, 4.0f, kWood, 18);
+    p.arc(bx, by - 21.0f, 12.0f, 8.0f, 3.4f, 6.0f, kWoodLight, 1.5f, 12);
 }
 
 void drawTrees(Painter& p) {
@@ -1023,6 +1036,9 @@ void drawHover(Painter& p, const Hover& h, float camX, float camY, float time) {
 
 // ---------------- HUD ----------------
 
+void drawOrderBoard(Painter& p, const FarmWorld& world, int viewW);
+void drawWonPanel(Painter& p, const FarmWorld& world, int viewW, int viewH);
+
 void drawSeedIcon(Painter& p, int kind, FPoint c) {
     if (kind == 0) {
         const std::vector<FPoint> outer = {{c.x - 18.0f, c.y + 10.0f},
@@ -1070,6 +1086,8 @@ void drawSeedIcon(Painter& p, int kind, FPoint c) {
 }
 
 void drawHud(Painter& p, const FarmWorld& world, int viewW, int viewH) {
+    drawOrderBoard(p, world, viewW);
+
     const RectI plaque = titlePlaqueRect();
     p.rect(static_cast<float>(plaque.x + 4), static_cast<float>(plaque.y + 5),
            static_cast<float>(plaque.w), static_cast<float>(plaque.h), kBorderGrass);
@@ -1138,6 +1156,181 @@ void drawHud(Painter& p, const FarmWorld& world, int viewW, int viewH) {
     }
 }
 
+// ---------------- 钓鱼与粒子 ----------------
+
+// 鱼线与鱼漂：抛竿时鱼线沿二次 Bezier 展开（实验四曲线的实际应用），
+// 其余状态鱼线从竿尖直连鱼漂。
+void drawFishing(Painter& p, const FarmWorld& world, float camX, float camY) {
+    if (world.fishState() == FishState::Idle) {
+        return;
+    }
+    const float f = world.facing() >= 0 ? 1.0f : -1.0f;
+    const FPoint tip{world.playerPos().x - camX + 10.0f * f,
+                     world.playerPos().y - camY - 40.0f};
+    const float bx = world.bobberPos().x - camX;
+    const float by = world.bobberPos().y - camY;
+
+    if (world.fishState() == FishState::Casting) {
+        const FPoint c{world.bobberCtrl().x - camX, world.bobberCtrl().y - camY};
+        FPoint prev = tip;
+        for (int i = 1; i <= 24; ++i) {
+            const float t = static_cast<float>(i) / 24.0f;
+            const float u = 1.0f - t;
+            const FPoint q{u * u * tip.x + 2.0f * u * t * c.x + t * t * bx,
+                           u * u * tip.y + 2.0f * u * t * c.y + t * t * by};
+            p.line(prev.x, prev.y, q.x, q.y, kOutline, 1.0f);
+            prev = q;
+        }
+    } else {
+        p.line(tip.x, tip.y, bx, by, kOutline, 1.0f);
+    }
+
+    // 鱼漂：上红下白的小浮子；咬钩时位置已在水面下 5px。
+    p.ellipseOutline(bx, by - 1.5f, 4.2f, 3.6f, Color(206, 76, 54), kOutline, 1.0f, 16);
+    p.ellipseOutline(bx, by + 2.2f, 3.4f, 2.6f, kWhite, kOutline, 1.0f, 14);
+}
+
+// 咬钩提示气泡：画在角色头顶，随时间轻微浮动。
+void drawBiteBubble(Painter& p, const FarmWorld& world, float camX, float camY) {
+    if (world.fishState() != FishState::Biting) {
+        return;
+    }
+    const float x = world.playerPos().x - camX;
+    const float y = world.playerPos().y - camY - 92.0f +
+                    std::sin(world.animTime() * 6.0f) * 2.0f;
+    p.ellipseOutline(x, y, 30.0f, 17.0f, kCream, kOutline, 1.5f, 26);
+    p.polygon({{x - 6.0f, y + 14.0f}, {x + 6.0f, y + 14.0f}, {x, y + 24.0f}}, kCream,
+              kOutline, 1.0f);
+    const char* s = "咬钩!";
+    text::drawText(p.fb(), static_cast<int>(x) - text::textWidth(s) / 2,
+                   static_cast<int>(y) - 8, s, kOutline);
+}
+
+// 粒子：水滴下坠、涟漪扩散、闪光收缩，按类型各画各的。
+void drawParticles(Painter& p, const FarmWorld& world, float camX, float camY) {
+    for (const Particle& pt : world.particles()) {
+        const float x = pt.pos.x - camX;
+        const float y = pt.pos.y - camY;
+        const float t = std::clamp(pt.life / pt.maxLife, 0.0f, 1.0f);
+        switch (pt.type) {
+        case ParticleType::Droplet:
+            p.ellipse(x, y, 2.2f, 2.0f, t < 0.5f ? kWaterShimmer : kWaterLight, 10);
+            break;
+        case ParticleType::Ring: {
+            const float r = 4.0f + 30.0f * t;
+            p.lineLoopEllipse(x, y, r, r * 0.6f, kWaterShimmer, 1.5f, 24);
+            break;
+        }
+        case ParticleType::Sparkle: {
+            const float s = (1.0f - t) * 6.0f + 2.0f;
+            const Color c = (static_cast<int>(pt.life * 20.0f) & 1) != 0 ? kFlowerYellow
+                                                                        : kWhite;
+            p.line(x - s, y, x + s, y, c, 1.0f);
+            p.line(x, y - s, x, y + s, c, 1.0f);
+            break;
+        }
+        }
+    }
+}
+
+// ---------------- 订单板与胜利面板 ----------------
+
+void drawMiniIcon(Painter& p, int kind, float cx, float cy) {
+    switch (kind) {
+    case 0: // 白菜
+        p.ellipseOutline(cx, cy, 9.0f, 8.0f, kLeaf, kLeafDark, 1.0f, 16);
+        p.ellipse(cx - 2.0f, cy - 2.0f, 3.4f, 3.0f, Color(228, 238, 192), 10);
+        break;
+    case 1: // 番茄
+        p.ellipseOutline(cx, cy + 1.0f, 8.5f, 8.0f, Color(206, 76, 54),
+                         Color(148, 44, 34), 1.0f, 18);
+        p.line(cx - 3.0f, cy - 6.0f, cx, cy - 9.0f, kLeafDark, 1.4f);
+        p.line(cx + 3.0f, cy - 6.0f, cx, cy - 9.0f, kLeafDark, 1.4f);
+        break;
+    case 2: // 胡萝卜
+        p.polygon({{cx - 5.0f, cy - 6.0f}, {cx + 5.0f, cy - 6.0f}, {cx, cy + 8.0f}},
+                  Color(226, 128, 48), Color(166, 82, 28), 1.0f);
+        p.line(cx - 1.0f, cy - 7.0f, cx - 5.0f, cy - 12.0f, kLeafDark, 1.4f);
+        p.line(cx + 1.0f, cy - 7.0f, cx + 5.0f, cy - 12.0f, kLeafDark, 1.4f);
+        break;
+    default: // 鱼
+        p.ellipseOutline(cx - 2.0f, cy, 7.0f, 4.0f, kFish, kOutline, 1.0f, 16);
+        p.polygon({{cx + 4.0f, cy}, {cx + 10.0f, cy - 4.0f}, {cx + 10.0f, cy + 4.0f}},
+                  kFish, kOutline, 1.0f);
+        p.ellipse(cx - 6.0f, cy - 1.0f, 1.0f, 1.0f, kOutline, 8);
+        break;
+    }
+}
+
+void drawOrderBoard(Painter& p, const FarmWorld& world, int viewW) {
+    const RectI b = orderBoardRect(viewW);
+    p.rect(static_cast<float>(b.x + 4), static_cast<float>(b.y + 5),
+           static_cast<float>(b.w), static_cast<float>(b.h), kBorderGrass);
+    p.rect(static_cast<float>(b.x), static_cast<float>(b.y), static_cast<float>(b.w),
+           static_cast<float>(b.h), kOutline);
+    p.rect(static_cast<float>(b.x + 2), static_cast<float>(b.y + 2),
+           static_cast<float>(b.w - 4), static_cast<float>(b.h - 4), kWood);
+    p.rect(static_cast<float>(b.x + 6), static_cast<float>(b.y + 6),
+           static_cast<float>(b.w - 12), 2.0f, kWoodLight);
+
+    text::drawText(p.fb(), b.x + 12, b.y + 12, "订单板", kCream);
+    p.line(static_cast<float>(b.x + 10), static_cast<float>(b.y + 36),
+           static_cast<float>(b.x + b.w - 10), static_cast<float>(b.y + 36), kWoodDark,
+           1.5f);
+
+    struct Row {
+        int kind;
+        int need;
+        int have;
+    };
+    const Row rows[4] = {{0, kOrderCabbage, world.inventory().cabbage},
+                         {1, kOrderTomato, world.inventory().tomato},
+                         {2, kOrderCarrot, world.inventory().carrot},
+                         {3, kOrderFish, world.inventory().fish}};
+    int y = b.y + 46;
+    for (const Row& r : rows) {
+        drawMiniIcon(p, r.kind, static_cast<float>(b.x + 30), static_cast<float>(y + 8));
+        char buf[16];
+        std::snprintf(buf, sizeof(buf), "%d/%d", r.have, r.need);
+        const bool done = r.have >= r.need;
+        text::drawText(p.fb(), b.x + 52, y, buf,
+                       done ? Color(134, 196, 108) : kCream);
+        y += 26;
+    }
+
+    const int total = static_cast<int>(world.playSeconds());
+    char t[16];
+    std::snprintf(t, sizeof(t), "%02d:%02d", total / 60, total % 60);
+    text::drawText(p.fb(), b.x + 12, y + 2, t, kCream);
+}
+
+void drawWonPanel(Painter& p, const FarmWorld& world, int viewW, int viewH) {
+    const int w = 400;
+    const int h = 180;
+    const int x = viewW / 2 - w / 2;
+    const int y = viewH / 2 - h / 2 - 30;
+    p.rect(static_cast<float>(x + 6), static_cast<float>(y + 8), static_cast<float>(w),
+           static_cast<float>(h), Color(40, 54, 34));
+    p.rect(static_cast<float>(x), static_cast<float>(y), static_cast<float>(w),
+           static_cast<float>(h), kOutline);
+    p.rect(static_cast<float>(x + 3), static_cast<float>(y + 3),
+           static_cast<float>(w - 6), static_cast<float>(h - 6), kWood);
+    p.rect(static_cast<float>(x + 8), static_cast<float>(y + 8),
+           static_cast<float>(w - 16), static_cast<float>(h - 16),
+           Color(238, 226, 196));
+
+    const char* title = "订单完成！";
+    text::drawText(p.fb(), x + (w - text::textWidth(title)) / 2, y + 30, title, kOutline);
+    const int total = static_cast<int>(world.playSeconds());
+    char t[32];
+    std::snprintf(t, sizeof(t), "用时 %02d:%02d", total / 60, total % 60);
+    text::drawText(p.fb(), x + (w - text::textWidth(t)) / 2, y + 82, t,
+                   Color(96, 72, 44));
+    const char* hint = "按 R 重开";
+    text::drawText(p.fb(), x + (w - text::textWidth(hint)) / 2, y + 122, hint,
+                   Color(96, 72, 44));
+}
+
 // ---------------- 超采样降采样 ----------------
 
 void downsample2x(const FrameBuffer& src, FrameBuffer& dst) {
@@ -1158,16 +1351,42 @@ void downsample2x(const FrameBuffer& src, FrameBuffer& dst) {
 
 } // namespace
 
-FarmRender::FarmRender() : background_(kWorldW, kWorldH) {}
+FarmRender::FarmRender() : background_(kWorldW, kWorldH), farmLayer_(1, 1) {}
 
 void FarmRender::build(const FarmWorld& world) {
+    // 静态层：草地/土路/池塘/花草/树木，一次烘成。
     FrameBuffer hi(kWorldW * 2, kWorldH * 2);
     Painter p(hi, 2.0f);
-    drawScene(p, world);
+    drawGround(p);
+    drawPath(p);
+    drawPond(p);
+    drawMeadow(p);
+    drawTrees(p);
     downsample2x(hi, background_);
+    bakeFarmLayer(world);
+}
+
+void FarmRender::bakeFarmLayer(const FarmWorld& world) {
+    // 农田层：土台附近的小矩形里重画 草地+土路+农田（与整图同序），再盖回大背景。
+    // 注：AET 增量累加的交点 x 依赖画布绝对坐标，局部重烘与整图烘培在多边形
+    // 边缘会有 ±1 子像素的翻转（降采样后 ≤2/255），属可接受的固有差异。
+    farmBakeRect_ = {kFarmBakeX, kFarmBakeY, kFarmBakeW, kFarmBakeH};
+    FrameBuffer hi(kFarmBakeW * 2, kFarmBakeH * 2);
+    Painter p(hi, 2.0f, {static_cast<float>(kFarmBakeX), static_cast<float>(kFarmBakeY)});
+    drawGround(p);
+    drawPath(p);
+    drawFarm(p, world);
+    downsample2x(hi, farmLayer_);
+    background_.copyRectFrom(farmLayer_, 0, 0, kFarmBakeW, kFarmBakeH, kFarmBakeX,
+                             kFarmBakeY);
+    bakedFarmVersion_ = world.farmVersion();
 }
 
 void FarmRender::frame(FrameBuffer& fb, const FarmWorld& world, bool hud) {
+    // 农田版本号落后（播种/浇水/生长进阶/收获）时局部重烘农田层。
+    if (world.farmVersion() != bakedFarmVersion_) {
+        bakeFarmLayer(world);
+    }
     fb.clear(kBorderGrass);
     const int camX = static_cast<int>(std::lround(world.camera().x));
     const int camY = static_cast<int>(std::lround(world.camera().y));
@@ -1176,12 +1395,18 @@ void FarmRender::frame(FrameBuffer& fb, const FarmWorld& world, bool hud) {
     Painter p(fb, 1.0f);
     drawHover(p, world.hover(), static_cast<float>(camX), static_cast<float>(camY),
               world.animTime());
+    drawFishing(p, world, static_cast<float>(camX), static_cast<float>(camY));
     drawDragon(p,
                {world.playerPos().x - static_cast<float>(camX),
                 world.playerPos().y - static_cast<float>(camY)},
                world.moving(), world.walkPhase(), world.animTime(), world.facing());
+    drawBiteBubble(p, world, static_cast<float>(camX), static_cast<float>(camY));
+    drawParticles(p, world, static_cast<float>(camX), static_cast<float>(camY));
     if (hud) {
         drawHud(p, world, fb.width(), fb.height());
+        if (world.won()) {
+            drawWonPanel(p, world, fb.width(), fb.height());
+        }
     }
 }
 
@@ -1190,6 +1415,16 @@ FrameBuffer FarmRender::captureWorld(const FarmWorld& world) const {
     Painter p(hi, 2.0f);
     drawScene(p, world);
     drawDragon(p, world.playerPos(), false, 0.0f, 0.0f, world.facing());
+    FrameBuffer out(kWorldW, kWorldH);
+    downsample2x(hi, out);
+    return out;
+}
+
+FrameBuffer FarmRender::captureScene(const FarmWorld& world) const {
+    // 与整图 drawScene 完全同序，用于校验"静态层+农田层"分炉烘培的一致性。
+    FrameBuffer hi(kWorldW * 2, kWorldH * 2);
+    Painter p(hi, 2.0f);
+    drawScene(p, world);
     FrameBuffer out(kWorldW, kWorldH);
     downsample2x(hi, out);
     return out;

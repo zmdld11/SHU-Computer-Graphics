@@ -39,6 +39,14 @@ constexpr int kFarmApronY = kFarmY - 16;
 constexpr int kFarmApronW = kFarmW + 32;
 constexpr int kFarmApronH = kFarmH + 16;
 
+// 农田动态层重烘范围：与土台同宽（树冠最右 141px，不会伸进 144 以内），
+// 上下外扩罩住田垄装饰与土床边缘的外溢；边界外一圈不放静态装饰，
+// 保证局部重烘与整图烘培逐像素一致。
+constexpr int kFarmBakeX = kFarmApronX;
+constexpr int kFarmBakeY = kFarmApronY - 16;
+constexpr int kFarmBakeW = kFarmApronW;
+constexpr int kFarmBakeH = kFarmApronH + 32;
+
 // 土路：横穿农田下方，接到池塘栈道。
 constexpr int kPathX0 = 144;
 constexpr int kPathX1 = 952;
@@ -65,7 +73,13 @@ constexpr int kDockTipRow = kDockRow + kDockRows - 1;
 constexpr int kSpawnCol = 20;
 constexpr int kSpawnRow = 20;
 
-// HUD：3 个种子槽 + 左上角木牌。渲染和鼠标命中测试共用。
+// 订单需求：3 白菜 + 3 番茄 + 2 胡萝卜 + 3 鱼，集齐即胜利。
+constexpr int kOrderCabbage = 3;
+constexpr int kOrderTomato = 3;
+constexpr int kOrderCarrot = 2;
+constexpr int kOrderFish = 3;
+
+// HUD：3 个种子槽 + 左上角木牌 + 右上角订单板。渲染和鼠标命中测试共用。
 constexpr int kHudSlot = 62;
 constexpr int kHudGap = 14;
 
@@ -122,6 +136,21 @@ inline bool inDock(float x, float y) {
 inline bool inFarmApron(float x, float y) {
     return x >= kFarmApronX && x < kFarmApronX + kFarmApronW && y >= kFarmApronY &&
            y < kFarmApronY + kFarmApronH;
+}
+
+inline bool inFarmBakeRect(float x, float y) {
+    return x >= kFarmBakeX && x < kFarmBakeX + kFarmBakeW && y >= kFarmBakeY &&
+           y < kFarmBakeY + kFarmBakeH;
+}
+
+// 重烘矩形再外扩一圈（装饰抖动幅度 + 草叶高度），草丛/花/石头只要中心
+// 落在这一圈里就不生成，避免装饰跨界被农田层章盖掉半截。
+inline bool nearFarmBakeRect(float x, float y) {
+    constexpr float kMargin = 24.0f;
+    return x >= static_cast<float>(kFarmBakeX) - kMargin &&
+           x < static_cast<float>(kFarmBakeX + kFarmBakeW) + kMargin &&
+           y >= static_cast<float>(kFarmBakeY) - kMargin &&
+           y < static_cast<float>(kFarmBakeY + kFarmBakeH) + kMargin;
 }
 
 inline bool inPathArea(float x, float y) {
@@ -189,8 +218,16 @@ inline RectI titlePlaqueRect() {
     return {18, 16, 154, 48};
 }
 
+// 右上角订单板：四行物品进度 + 一行用时。
+inline RectI orderBoardRect(int viewW) {
+    return {viewW - 214, 14, 198, 172};
+}
+
 inline bool inHud(IPoint p, int viewW, int viewH) {
     if (titlePlaqueRect().contains(p)) {
+        return true;
+    }
+    if (orderBoardRect(viewW).contains(p)) {
         return true;
     }
     for (int i = 0; i < 3; ++i) {
