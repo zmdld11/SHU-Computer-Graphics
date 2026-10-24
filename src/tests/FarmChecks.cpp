@@ -125,6 +125,7 @@ int runFarmChecks() {
     world.update(6.5f);
     expect(world.crop(0).stage == CropStage::Sprout, "game: 6 秒进幼苗期");
     expect(!world.crop(0).watered, "game: 进阶后重置浇水");
+    expect(!world.particles().empty(), "game: 进阶冒出新芽闪光");
     world.update(13.0f);
     expect(world.crop(0).stage == CropStage::Mature, "game: 浇水 1.6x 提速到成熟");
     const int cabbageBefore = world.inventory().cabbage;

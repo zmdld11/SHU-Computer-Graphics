@@ -1348,6 +1348,46 @@ void drawParticles(Painter& p, const FarmWorld& world, float camX, float camY) {
     }
 }
 
+// 池塘动态水纹：几段高光弧线随时间明灭游走，水面不再是一张死图。
+void drawPondShimmer(Painter& p, const FarmWorld& world, float camX, float camY) {
+    struct Shimmer {
+        float cx;
+        float cy;
+        float rx;
+        float ry;
+        float phase;
+    };
+    const Shimmer spots[] = {{kPondCx - 62.0f, kPondCy - 104.0f, 58.0f, 17.0f, 0.0f},
+                             {kPondCx + 38.0f, kPondCy + 44.0f, 44.0f, 12.0f, 2.1f},
+                             {kPondCx + 58.0f, kPondCy + 78.0f, 58.0f, 15.0f, 4.2f},
+                             {kPondCx - 20.0f, kPondCy + 10.0f, 50.0f, 13.0f, 1.2f}};
+    for (const Shimmer& s : spots) {
+        // 明灭靠颜色向水面色插值（线段是不透明绘制），暗相位直接融入水面。
+        const float t = std::clamp(std::sin(world.animTime() * 1.6f + s.phase), 0.0f, 1.0f);
+        if (t < 0.12f) {
+            continue;
+        }
+        const float drift = std::sin(world.animTime() * 0.7f + s.phase) * 6.0f;
+        p.arc(s.cx + drift - camX, s.cy - camY, s.rx, s.ry, 3.45f, 5.75f,
+              lerpColor(kWaterMid, kWaterShimmer, t * 0.85f), 1.4f, 14);
+    }
+}
+
+// 小屋炊烟：三缕烟循环上升、放大、变淡。
+void drawChimneySmoke(Painter& p, const FarmWorld& world, float camX, float camY) {
+    const float topX = kCabinX + kCabinW - 61.0f;
+    const float topY = kCabinY - 30.0f;
+    for (int i = 0; i < 3; ++i) {
+        const float t = std::fmod(world.animTime() * 0.22f + static_cast<float>(i) / 3.0f,
+                                  1.0f);
+        const float x = topX + t * 20.0f - camX;
+        const float y = topY - t * 52.0f - camY;
+        const float r = 5.0f + t * 10.0f;
+        const std::uint8_t a = static_cast<std::uint8_t>((1.0f - t) * 80.0f);
+        p.ellipse(x, y, r, r * 0.8f, Color(236, 236, 228), 14, a);
+    }
+}
+
 // ---------------- 订单板与胜利面板 ----------------
 
 void drawMiniIcon(Painter& p, int kind, float cx, float cy) {
@@ -1424,15 +1464,17 @@ void drawWonPanel(Painter& p, const FarmWorld& world, int viewW, int viewH) {
     const int h = 180;
     const int x = viewW / 2 - w / 2;
     const int y = viewH / 2 - h / 2 - 30;
+    // 有了 alpha 混合，胜利面板压一层半透明暗幕 + 半透明木底，不再死板。
+    p.fb().blendRect(0, 0, viewW - 1, viewH - 1, Color(10, 14, 10), 110);
     p.rect(static_cast<float>(x + 6), static_cast<float>(y + 8), static_cast<float>(w),
-           static_cast<float>(h), Color(40, 54, 34));
+           static_cast<float>(h), Color(40, 54, 34), 150);
     p.rect(static_cast<float>(x), static_cast<float>(y), static_cast<float>(w),
            static_cast<float>(h), kOutline);
     p.rect(static_cast<float>(x + 3), static_cast<float>(y + 3),
-           static_cast<float>(w - 6), static_cast<float>(h - 6), kWood);
+           static_cast<float>(w - 6), static_cast<float>(h - 6), kWood, 225);
     p.rect(static_cast<float>(x + 8), static_cast<float>(y + 8),
            static_cast<float>(w - 16), static_cast<float>(h - 16),
-           Color(238, 226, 196));
+           Color(238, 226, 196), 235);
 
     const char* title = "订单完成！";
     text::drawText(p.fb(), x + (w - text::textWidth(title)) / 2, y + 30, title, kOutline);
@@ -1869,6 +1911,10 @@ void FarmRender::frame(FrameBuffer& fb, const FarmWorld& world, bool hud) {
     } else {
         fb.copyRectFrom(background_, camX, camY, fb.width(), fb.height(), 0, 0);
         const SkyState sky = skyAt(world.hour());
+
+        // 水面波纹与炊烟：环境动画，画在背景之上、实体之下。
+        drawPondShimmer(p, world, static_cast<float>(camX), static_cast<float>(camY));
+        drawChimneySmoke(p, world, static_cast<float>(camX), static_cast<float>(camY));
 
         // 影子最先画（贴着背景），晨昏时太阳与路灯两套影子同时出现。
         drawShadows(p, world, static_cast<float>(camX), static_cast<float>(camY), sky);

@@ -318,10 +318,12 @@ void FarmWorld::updateCrops(float dt) {
             c.stage = CropStage::Sprout;
             c.watered = false;
             markFarmChanged();
+            addParticles(ParticleType::Sparkle, plotCenter(static_cast<int>(i)), 3);
         } else if (c.stage == CropStage::Sprout && c.age >= 14.0f) {
             c.stage = CropStage::Mature;
             c.watered = false;
             markFarmChanged();
+            addParticles(ParticleType::Sparkle, plotCenter(static_cast<int>(i)), 4);
         }
     }
 }
@@ -336,6 +338,7 @@ void FarmWorld::updateFishing(float dt) {
             fishState_ = FishState::Waiting;
             fishTimer_ = 0.0f;
             rippleTimer_ = 0.0f;
+            bobberPos_ = bobberTarget_; // 落水：漂就位（单帧大 dt 时也不能停在竿尖）
             addParticles(ParticleType::Droplet, bobberTarget_, 8);
             addParticles(ParticleType::Ring, bobberTarget_, 1);
         } else {

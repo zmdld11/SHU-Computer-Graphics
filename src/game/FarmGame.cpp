@@ -217,6 +217,33 @@ bool writeFarmCapture() {
         }
     }
 
+    // 元素动画验证：浇水水花与收获闪光的瞬间帧（白天拍，粒子看得清）。
+    world.debugSetTime(10.0f);
+    world.debugSetPlayerCell(plotCenterCell(2).x, plotCenterCell(2).y);
+    world.debugPlant(2, Seed::Cabbage, CropStage::Sprout, false);
+    world.onClick(plotCenter(2)); // 站在田上点田：立即浇水，粒子正好在空中
+    render.frame(view, world, true);
+    if (!cg::writePPM("game-fx-watering.ppm", view)) {
+        return false;
+    }
+    world.debugPlant(3, Seed::Carrot, CropStage::Mature, false);
+    world.debugSetPlayerCell(plotCenterCell(3).x, plotCenterCell(3).y);
+    world.onClick(plotCenter(3)); // 收获闪光
+    render.frame(view, world, true);
+    if (!cg::writePPM("game-fx-harvest.ppm", view)) {
+        return false;
+    }
+
+    // 抛竿落水：鱼漂飞到水面、水花与涟漪全在开阔水面上，特效一目了然。
+    world.debugSetPlayerCell(kDockTipCol, kDockTipRow);
+    world.onClick({kPondCx, kPondCy + 80.0f}); // 已在栈道尽头：立即抛竿
+    world.update(FarmWorld::kCastTime + 0.12f); // 推过抛竿
+    world.update(0.05f);                        // 落水水花正炸开、鱼漂就位
+    render.frame(view, world, true);
+    if (!cg::writePPM("game-fx-cast.ppm", view)) {
+        return false;
+    }
+
     // 场景切换验证：小屋室内白天/深夜各一张（窗户天色与夜色随时刻变）。
     world.debugEnterCabin();
     world.debugSetTime(12.5f);
@@ -233,7 +260,7 @@ bool writeFarmCapture() {
     std::cout << "[game] 已写出 game-background.ppm / game-layer-1..6.ppm / "
                  "game-world.ppm / game-pond.ppm / game-farm.ppm / "
                  "game-day-0612|1230|1748 / game-night-2300.ppm / "
-                 "game-cabin-day|night.ppm"
+                 "game-fx-watering|harvest|cast.ppm / game-cabin-day|night.ppm"
               << std::endl;
     return true;
 }
