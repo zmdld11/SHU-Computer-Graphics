@@ -228,6 +228,60 @@ int runFarmChecks() {
         expect(diff <= 48, "game: 烘培差异仅限边缘子像素");
     }
 
+    // ---- 昼夜系统（#71）----
+    // 太阳：6:00-18:00 在天上，正午最高；影子方向自西经南扫到东，晨昏最长。
+    // 双光源重叠窗口：清晨 6:00-6:30 与黄昏 17:30-18:00。
+    expect(!skyAt(3.0f).sunUp && skyAt(3.0f).lampIntensity > 0.99f,
+           "day: 凌晨只有路灯");
+    expect(skyAt(6.2f).sunUp && skyAt(6.2f).lampIntensity > 0.0f,
+           "day: 清晨太阳与路灯同时生效");
+    expect(skyAt(12.5f).sunElevation > 0.98f && skyAt(12.5f).lampIntensity == 0.0f,
+           "day: 正午只有太阳");
+    expect(skyAt(17.8f).sunUp && skyAt(17.8f).lampIntensity > 0.0f,
+           "day: 黄昏双光源重叠");
+    expect(!skyAt(21.0f).sunUp && skyAt(21.0f).lampIntensity > 0.99f,
+           "day: 夜里只有路灯");
+    const FPoint morning = sunShadowVec(7.0f);
+    const FPoint noon = sunShadowVec(12.0f);
+    const FPoint evening = sunShadowVec(17.0f);
+    expect(morning.x < -0.8f, "day: 清晨影子朝西");
+    expect(std::fabs(noon.x) < 0.3f, "day: 正午影子朝南");
+    expect(evening.x > 0.8f, "day: 傍晚影子朝东");
+    const float lenMorning = std::sqrt(morning.x * morning.x + morning.y * morning.y);
+    const float lenNoon = std::sqrt(noon.x * noon.x + noon.y * noon.y);
+    expect(lenMorning > lenNoon * 2.0f, "day: 晨昏影子比正午长一倍以上");
+    AmbientTint blue;
+    AmbientTint warm;
+    ambientTintAt(23.0f, blue, warm);
+    expect(blue.alpha > 90 && warm.alpha == 0, "day: 深夜只剩夜蓝叠加");
+    ambientTintAt(18.3f, blue, warm);
+    expect(blue.alpha > 0 && warm.alpha > 0, "day: 黄昏蓝橙两层叠加");
+
+    // 时间轴：随 update 推进，跨零点天数 +1；胜利后冻结。
+    world.reset();
+    world.setViewport(800, 600);
+    world.debugSetTime(23.9f);
+    const float h0 = world.hour();
+    world.update(0.2f * FarmWorld::kDayLength / 24.0f); // 推进 0.2 小时
+    expect(world.hour() > h0 || world.hour() < 1.0f, "day: 时刻随帧推进");
+    world.debugSetTime(23.99f);
+    const int dayBefore = world.day();
+    for (int i = 0; i < 40; ++i) {
+        world.update(0.05f);
+    }
+    expect(world.day() == dayBefore + 1, "day: 跨零点进入新的一天");
+    world.debugAddInventory(0, kOrderCabbage);
+    world.debugAddInventory(1, kOrderTomato);
+    world.debugAddInventory(2, kOrderCarrot);
+    world.debugAddInventory(3, kOrderFish);
+    expect(world.won(), "day: 铺垫胜利");
+    world.debugSetTime(12.0f);
+    const float frozenHour = world.hour();
+    world.update(1.0f);
+    expect(world.hour() == frozenHour, "day: 胜利后时间冻结");
+    world.reset();
+    world.setViewport(800, 600);
+
     std::cout << (fails == 0 ? "farm checks passed" : "farm checks FAILED") << std::endl;
     return fails;
 }

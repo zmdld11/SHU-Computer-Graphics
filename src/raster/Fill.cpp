@@ -17,7 +17,7 @@ struct ActiveEdge {
 } // namespace
 
 void scanlineFillPolygon(FrameBuffer& fb, const std::vector<IPoint>& polygon,
-                         const Color& color) {
+                         const Color& color, std::uint8_t alpha) {
     const int n = static_cast<int>(polygon.size());
     if (n < 3 || fb.width() <= 0 || fb.height() <= 0) {
         return;
@@ -77,7 +77,11 @@ void scanlineFillPolygon(FrameBuffer& fb, const std::vector<IPoint>& polygon,
             const int xStart = std::max(0, static_cast<int>(std::ceil(aet[i].x)));
             const int xEnd =
                 std::min(fb.width() - 1, static_cast<int>(std::floor(aet[i + 1].x)));
-            fb.fillSpan(y, xStart, xEnd, color);
+            if (alpha >= 255) {
+                fb.fillSpan(y, xStart, xEnd, color);
+            } else {
+                fb.blendSpan(y, xStart, xEnd, color, alpha);
+            }
         }
 
         for (auto& e : aet) {

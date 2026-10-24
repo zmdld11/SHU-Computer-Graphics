@@ -118,11 +118,16 @@ public:
     FrameBuffer& fb() const { return fb_; }
     Color sample(float x, float y) const { return fb_.pixel(px(x), py(y)); }
 
-    void rect(float x, float y, float w, float h, const Color& c) {
+    void rect(float x, float y, float w, float h, const Color& c,
+              std::uint8_t alpha = 255) {
         if (w <= 0.0f || h <= 0.0f) {
             return;
         }
-        fb_.fillRect(px(x), py(y), px(x + w) - 1, py(y + h) - 1, c);
+        if (alpha >= 255) {
+            fb_.fillRect(px(x), py(y), px(x + w) - 1, py(y + h) - 1, c);
+        } else {
+            fb_.blendRect(px(x), py(y), px(x + w) - 1, py(y + h) - 1, c, alpha);
+        }
     }
 
     void line(float x0, float y0, float x1, float y1, const Color& c, float width = 1.0f) {
@@ -140,7 +145,8 @@ public:
         line(x, y + h, x, y, c, width);
     }
 
-    void ellipse(float cx, float cy, float rx, float ry, const Color& c, int segments = 40) {
+    void ellipse(float cx, float cy, float rx, float ry, const Color& c, int segments = 40,
+                 std::uint8_t alpha = 255) {
         if (rx <= 0.0f || ry <= 0.0f) {
             return;
         }
@@ -151,7 +157,7 @@ public:
             const float a = 2.0f * kPi * static_cast<float>(i) / static_cast<float>(n);
             pts.push_back({px(cx + rx * std::cos(a)), py(cy + ry * std::sin(a))});
         }
-        raster::scanlineFillPolygon(fb_, pts, c);
+        raster::scanlineFillPolygon(fb_, pts, c, alpha);
     }
 
     // 椭圆内做左上→右下的双色渐变：水面靠岸偏浅、中心偏深，比一圈圈硬色带自然。
@@ -199,7 +205,7 @@ public:
     }
 
     void polygon(const std::vector<FPoint>& pts, const Color& fill, const Color& outline,
-                 float width) {
+                 float width, std::uint8_t alpha = 255) {
         if (pts.size() < 3) {
             return;
         }
@@ -208,7 +214,7 @@ public:
         for (const FPoint& p : pts) {
             ip.push_back({px(p.x), py(p.y)});
         }
-        raster::scanlineFillPolygon(fb_, ip, fill);
+        raster::scanlineFillPolygon(fb_, ip, fill, alpha);
         if (width > 0.0f) {
             for (std::size_t i = 0; i < pts.size(); ++i) {
                 const FPoint& a = pts[i];
@@ -749,12 +755,45 @@ void drawPond(Painter& p) {
 
 // ---------------- 散落装饰与树林 ----------------
 
+// 树与灌木的布局表：绘制和影子投射共用（影子要按太阳方位逐帧重算）。
+struct TreeSpot {
+    float x;
+    float y;
+    float scale;
+    bool variant;
+};
+constexpr TreeSpot kTrees[] = {
+    {90.0f, 100.0f, 1.05f, false},  {250.0f, 84.0f, 0.9f, true},
+    {410.0f, 112.0f, 1.1f, false},  {570.0f, 92.0f, 0.95f, true},
+    {730.0f, 108.0f, 1.0f, false},  {890.0f, 86.0f, 1.15f, true},
+    {1050.0f, 110.0f, 0.9f, false}, {1210.0f, 92.0f, 1.05f, true},
+    {1370.0f, 108.0f, 0.95f, false},{1490.0f, 88.0f, 1.0f, true},
+    {110.0f, 1110.0f, 1.0f, false}, {280.0f, 1128.0f, 0.9f, true},
+    {450.0f, 1098.0f, 1.1f, false}, {620.0f, 1120.0f, 0.95f, true},
+    {790.0f, 1094.0f, 1.05f, false},{960.0f, 1124.0f, 0.9f, true},
+    {1130.0f, 1100.0f, 1.0f, false},{1300.0f, 1120.0f, 1.05f, true},
+    {1460.0f, 1096.0f, 0.9f, false},{70.0f, 300.0f, 1.0f, true},
+    {60.0f, 490.0f, 0.9f, false},   {80.0f, 670.0f, 1.05f, true},
+    {64.0f, 850.0f, 0.95f, false},  {78.0f, 1020.0f, 1.0f, true},
+    {1470.0f, 290.0f, 0.95f, false},{1458.0f, 470.0f, 1.05f, true},
+    {1474.0f, 650.0f, 0.9f, false}, {1462.0f, 830.0f, 1.0f, true},
+    {1472.0f, 1010.0f, 1.05f, false}};
+constexpr float kBushSpots[][3] = {
+    {150.0f, 760.0f, 1.0f},  {150.0f, 930.0f, 0.85f},
+    {1390.0f, 770.0f, 1.0f}, {1390.0f, 940.0f, 0.9f},
+    {330.0f, 1000.0f, 1.1f}, {620.0f, 1015.0f, 0.9f},
+    {900.0f, 995.0f, 1.0f},  {1180.0f, 1010.0f, 0.95f},
+    {760.0f, 120.0f, 1.0f},  {1090.0f, 140.0f, 0.85f},
+    {1260.0f, 980.0f, 1.0f}, {480.0f, 150.0f, 0.8f}};
+
 bool meadowBlocked(float x, float y) {
     // 农田动态层重烘范围（含外圈缓冲）内不放静态装饰：这块区域会被局部
     // 重烘整片覆盖，跨界的装饰会在重烘后被凭空截断。
     return nearFarmBakeRect(x, y) || inFarmApron(x, y) || inPathArea(x, y) ||
            inPond(x, y, 28.0f) || inDock(x, y);
 }
+
+void drawLampPost(Painter& p);
 
 void drawMeadow(Painter& p) {
     for (int row = kWalkMinRow; row <= kWalkMaxRow; ++row) {
@@ -827,36 +866,33 @@ void drawMeadow(Painter& p) {
     p.polygon(bucket, kWoodDark, kOutline, 1.5f);
     p.ellipse(bx, by - 20.0f, 11.0f, 4.0f, kWood, 18);
     p.arc(bx, by - 21.0f, 12.0f, 8.0f, 3.4f, 6.0f, kWoodLight, 1.5f, 12);
+
+    drawLampPost(p);
+}
+
+// 路灯：灯杆+灯头+暖色灯泡。夜里 bulb 的亮度靠 drawLampGlow 每帧叠光。
+void drawLampPost(Painter& p) {
+    p.ellipse(kLampX + 3.0f, kLampY + 3.0f, 9.0f, 3.5f, kGrassDeep, 14);
+    p.line(kLampX, kLampY, kLampX, kLampBulbY + 8.0f, kStoneDark, 5.0f);
+    p.line(kLampX - 1.0f, kLampY, kLampX - 1.0f, kLampBulbY + 10.0f, kStoneLight, 1.5f);
+    p.ellipse(kLampX, kLampBulbY + 8.0f, 4.5f, 3.0f, kStoneDark, 12);
+    // 灯头：六边形灯罩里一颗暖黄灯泡。
+    const std::vector<FPoint> cap = {{kLampX - 9.0f, kLampBulbY + 8.0f},
+                                     {kLampX - 6.0f, kLampBulbY - 2.0f},
+                                     {kLampX + 6.0f, kLampBulbY - 2.0f},
+                                     {kLampX + 9.0f, kLampBulbY + 8.0f}};
+    p.polygon(cap, kStoneDark, kOutline, 1.2f);
+    p.line(kLampX - 9.0f, kLampBulbY - 2.0f, kLampX + 9.0f, kLampBulbY - 2.0f, kOutline,
+           1.5f);
+    p.ellipse(kLampX, kLampBulbY + 3.0f, 6.0f, 6.5f, Color(250, 204, 90), 16);
+    p.ellipse(kLampX - 1.5f, kLampBulbY + 1.0f, 1.8f, 2.2f, kCream, 10);
 }
 
 void drawTrees(Painter& p) {
-    struct Tree {
-        float x;
-        float y;
-        float scale;
-        bool variant;
-    };
-    const Tree trees[] = {
-        {90.0f, 100.0f, 1.05f, false},  {250.0f, 84.0f, 0.9f, true},
-        {410.0f, 112.0f, 1.1f, false},  {570.0f, 92.0f, 0.95f, true},
-        {730.0f, 108.0f, 1.0f, false},  {890.0f, 86.0f, 1.15f, true},
-        {1050.0f, 110.0f, 0.9f, false}, {1210.0f, 92.0f, 1.05f, true},
-        {1370.0f, 108.0f, 0.95f, false},{1490.0f, 88.0f, 1.0f, true},
-        {110.0f, 1110.0f, 1.0f, false}, {280.0f, 1128.0f, 0.9f, true},
-        {450.0f, 1098.0f, 1.1f, false}, {620.0f, 1120.0f, 0.95f, true},
-        {790.0f, 1094.0f, 1.05f, false},{960.0f, 1124.0f, 0.9f, true},
-        {1130.0f, 1100.0f, 1.0f, false},{1300.0f, 1120.0f, 1.05f, true},
-        {1460.0f, 1096.0f, 0.9f, false},{70.0f, 300.0f, 1.0f, true},
-        {60.0f, 490.0f, 0.9f, false},   {80.0f, 670.0f, 1.05f, true},
-        {64.0f, 850.0f, 0.95f, false},  {78.0f, 1020.0f, 1.0f, true},
-        {1470.0f, 290.0f, 0.95f, false},{1458.0f, 470.0f, 1.05f, true},
-        {1474.0f, 650.0f, 0.9f, false}, {1462.0f, 830.0f, 1.0f, true},
-        {1472.0f, 1010.0f, 1.05f, false}};
-
-    std::vector<Tree> sorted(std::begin(trees), std::end(trees));
+    std::vector<TreeSpot> sorted(std::begin(kTrees), std::end(kTrees));
     std::sort(sorted.begin(), sorted.end(),
-              [](const Tree& a, const Tree& b) { return a.y < b.y; });
-    for (const Tree& t : sorted) {
+              [](const TreeSpot& a, const TreeSpot& b) { return a.y < b.y; });
+    for (const TreeSpot& t : sorted) {
         drawTree(p, t.x, t.y, t.scale, t.variant);
     }
 }
@@ -1331,6 +1367,211 @@ void drawWonPanel(Painter& p, const FarmWorld& world, int viewW, int viewH) {
                    Color(96, 72, 44));
 }
 
+// ---------------- 昼夜光照：影子 / 环境色 / 灯光 ----------------
+
+constexpr Color kShadowTint{18, 22, 14};
+
+// 路灯（点光源）的影子：从灯位向外投射的四边形本影近似。
+// 基座两点撑开、远端收窄，长度随物体高度和到灯距离变化，每帧重算。
+void lampShadowQuad(Painter& p, float baseX, float baseY, float radius, float height,
+                    std::uint8_t alpha) {
+    const float dx = baseX - kLampX;
+    const float dy = baseY - kLampY;
+    const float dist = std::sqrt(dx * dx + dy * dy);
+    if (dist < 24.0f) {
+        return;
+    }
+    const float ux = dx / dist;
+    const float uy = dy / dist;
+    const float len = std::clamp(radius + height * (0.9f + dist * 0.0035f), 40.0f, 340.0f);
+    const float ex = baseX + ux * len;
+    const float ey = baseY + uy * len;
+    const float px = -uy;
+    const float py = ux;
+    const float wr = radius * 0.9f;
+    const float wf = radius * 0.32f;
+    const std::vector<FPoint> quad = {{baseX + px * wr, baseY + py * wr},
+                                      {baseX - px * wr, baseY - py * wr},
+                                      {ex - px * wf, ey - py * wf},
+                                      {ex + px * wf, ey + py * wf}};
+    p.polygon(quad, kShadowTint, kShadowTint, 0.0f, alpha);
+}
+
+// 每帧把所有投影体的影子重画一遍：白天太阳方向光（晨昏拉长），夜里路灯点光，
+// 晨昏两套同时画、各自减淡。影子只叠在背景上，实体随后绘制。
+void drawShadows(Painter& p, const FarmWorld& world, float camX, float camY,
+                 const SkyState& sky) {
+    const bool dual = sky.sunUp && sky.lampIntensity > 0.01f;
+    const float ox = -camX;
+    const float oy = -camY;
+
+    std::uint8_t sunA = 0;
+    FPoint sv{0.0f, 0.0f};
+    if (sky.sunUp) {
+        sv = sunShadowVec(world.hour());
+        float a = 0.30f - 0.10f * sky.sunElevation;
+        if (dual) {
+            a *= 0.7f;
+        }
+        sunA = static_cast<std::uint8_t>(a * 255.0f);
+    }
+    std::uint8_t lampA = 0;
+    if (sky.lampIntensity > 0.01f) {
+        float a = 0.30f * sky.lampIntensity;
+        if (dual) {
+            a *= 0.7f;
+        }
+        lampA = static_cast<std::uint8_t>(a * 255.0f);
+    }
+
+    // 树：影子锚在树根，长度按树冠高度折算。
+    for (const TreeSpot& t : kTrees) {
+        const float x = t.x + ox;
+        const float y = t.y + oy;
+        if (x < -260.0f || x > 1060.0f || y < -160.0f || y > 760.0f) {
+            continue; // 视口外不画
+        }
+        const float h = 64.0f * t.scale;
+        if (sunA > 0) {
+            p.ellipse(x + sv.x * h, y + sv.y * h, 48.0f * t.scale, 15.0f * t.scale,
+                      kShadowTint, 26, sunA);
+        }
+        if (lampA > 0) {
+            lampShadowQuad(p, x, y, 34.0f * t.scale, h, lampA);
+        }
+    }
+    // 灌木
+    for (const auto& b : kBushSpots) {
+        const float x = b[0] + ox;
+        const float y = b[1] + oy;
+        if (x < -160.0f || x > 960.0f || y < -120.0f || y > 720.0f) {
+            continue;
+        }
+        const float h = 26.0f * b[2];
+        if (sunA > 0) {
+            p.ellipse(x + sv.x * h, y + sv.y * h, 20.0f * b[2], 7.0f * b[2], kShadowTint,
+                      20, sunA);
+        }
+        if (lampA > 0) {
+            lampShadowQuad(p, x, y, 15.0f * b[2], h, lampA);
+        }
+    }
+    // 作物：田里长出来的都投一点影子，成熟期最高。
+    for (int i = 0; i < kPlotCols * kPlotRows; ++i) {
+        const Crop& c = world.crop(i);
+        if (c.stage == CropStage::Empty || c.stage == CropStage::Seed) {
+            continue;
+        }
+        const FPoint pc = plotCenter(i);
+        const float x = pc.x + ox;
+        const float y = pc.y + 26.0f + oy;
+        const float h = c.stage == CropStage::Mature ? 34.0f : 18.0f;
+        if (sunA > 0) {
+            p.ellipse(x + sv.x * h, y + sv.y * h, 17.0f, 5.5f, kShadowTint, 18, sunA);
+        }
+        if (lampA > 0) {
+            lampShadowQuad(p, x, y, 12.0f, h, lampA);
+        }
+    }
+    // 木桶
+    {
+        const float x = 682.0f + ox;
+        const float y = 598.0f + oy;
+        if (sunA > 0) {
+            p.ellipse(x + sv.x * 20.0f, y + sv.y * 20.0f, 13.0f, 4.5f, kShadowTint, 16,
+                      sunA);
+        }
+        if (lampA > 0) {
+            lampShadowQuad(p, x, y, 9.0f, 20.0f, lampA);
+        }
+    }
+    // 胖龙：影子跟着角色走，随时反映太阳位置。
+    {
+        const float x = world.playerPos().x + ox;
+        const float y = world.playerPos().y + 1.0f + oy;
+        if (sunA > 0) {
+            p.ellipse(x + sv.x * 44.0f, y + sv.y * 44.0f, 17.0f, 6.0f, kShadowTint, 22,
+                      sunA);
+        }
+        if (lampA > 0) {
+            lampShadowQuad(p, x, y, 12.0f, 44.0f, lampA);
+        }
+    }
+}
+
+// 全屏环境色：夜里压暗偏蓝，晨昏扫一层暖橙。HUD 在它之后绘制，不受影响。
+void applyAmbient(FrameBuffer& fb, float hour) {
+    AmbientTint blue;
+    AmbientTint warm;
+    ambientTintAt(hour, blue, warm);
+    if (blue.alpha > 0) {
+        fb.blendRect(0, 0, fb.width() - 1, fb.height() - 1, Color(blue.r, blue.g, blue.b),
+                     blue.alpha);
+    }
+    if (warm.alpha > 0) {
+        fb.blendRect(0, 0, fb.width() - 1, fb.height() - 1, Color(warm.r, warm.g, warm.b),
+                     warm.alpha);
+    }
+}
+
+// 路灯光晕：同心暖色圆由外向内加强，灯泡核心最亮；画在夜色之后，把灯周"点亮"。
+void drawLampGlow(Painter& p, const FarmWorld& world, float camX, float camY,
+                  const SkyState& sky) {
+    if (sky.lampIntensity <= 0.01f) {
+        return;
+    }
+    const float flicker = 0.94f + 0.06f * std::sin(world.animTime() * 7.3f);
+    const float x = kLampX - camX;
+    const float y = kLampBulbY - camY;
+    for (int i = 0; i < 8; ++i) {
+        const float t = static_cast<float>(i) / 7.0f; // 0 外圈 → 1 内圈
+        const float r = 250.0f - 190.0f * t;
+        const std::uint8_t a = static_cast<std::uint8_t>(
+            (3.0f + 22.0f * t) * sky.lampIntensity * flicker);
+        p.ellipse(x, y, r, r * 0.92f, Color(255, 196, 102), 36, a);
+    }
+    const std::uint8_t core = static_cast<std::uint8_t>(170.0f * sky.lampIntensity);
+    p.ellipse(x, y + 3.0f, 9.0f, 9.5f, Color(255, 236, 170), 18, core);
+}
+
+// ---------------- 时钟 HUD ----------------
+
+void drawClock(Painter& p, const FarmWorld& world, int viewW) {
+    const int w = 190;
+    const int h = 44;
+    const int x = viewW / 2 - w / 2;
+    const int y = 14;
+    p.rect(x + 4, y + 5, w, h, kBorderGrass);
+    p.rect(x, y, w, h, kOutline);
+    p.rect(x + 2, y + 2, w - 4, h - 4, kWood);
+    p.rect(x + 6, y + 6, w - 12, 2.0f, kWoodLight);
+
+    // 太阳/月亮图标：白天画光芒，夜里画月牙。
+    const SkyState sky = skyAt(world.hour());
+    const float ix = static_cast<float>(x) + 24.0f;
+    const float iy = static_cast<float>(y) + 22.0f;
+    if (sky.sunUp) {
+        for (int i = 0; i < 8; ++i) {
+            const float a = 2.0f * kPi * static_cast<float>(i) / 8.0f +
+                            world.animTime() * 0.4f;
+            p.line(ix + std::cos(a) * 9.0f, iy + std::sin(a) * 9.0f,
+                   ix + std::cos(a) * 12.5f, iy + std::sin(a) * 12.5f,
+                   Color(250, 204, 90), 1.5f);
+        }
+        p.ellipse(ix, iy, 6.5f, 6.5f, Color(250, 204, 90), 18);
+    } else {
+        p.ellipse(ix, iy, 7.5f, 7.5f, kCream, 20);
+        p.ellipse(ix + 3.5f, iy - 2.0f, 6.0f, 6.0f, kWood, 18);
+        p.ellipse(ix - 2.0f, iy + 1.0f, 1.0f, 1.0f, kCreamShade, 8);
+        p.ellipse(ix - 3.5f, iy - 3.0f, 0.8f, 0.8f, kCreamShade, 8);
+    }
+
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), "第%d天 %02d:%02d", world.day(),
+                  static_cast<int>(world.hour()), static_cast<int>(world.hour() * 60.0f) % 60);
+    text::drawText(p.fb(), x + 46, y + 13, buf, kCream);
+}
+
 // ---------------- 超采样降采样 ----------------
 
 void downsample2x(const FrameBuffer& src, FrameBuffer& dst) {
@@ -1393,6 +1634,10 @@ void FarmRender::frame(FrameBuffer& fb, const FarmWorld& world, bool hud) {
     fb.copyRectFrom(background_, camX, camY, fb.width(), fb.height(), 0, 0);
 
     Painter p(fb, 1.0f);
+    const SkyState sky = skyAt(world.hour());
+
+    // 影子最先画（贴着背景），晨昏时太阳与路灯两套影子同时出现。
+    drawShadows(p, world, static_cast<float>(camX), static_cast<float>(camY), sky);
     drawHover(p, world.hover(), static_cast<float>(camX), static_cast<float>(camY),
               world.animTime());
     drawFishing(p, world, static_cast<float>(camX), static_cast<float>(camY));
@@ -1402,8 +1647,14 @@ void FarmRender::frame(FrameBuffer& fb, const FarmWorld& world, bool hud) {
                world.moving(), world.walkPhase(), world.animTime(), world.facing());
     drawBiteBubble(p, world, static_cast<float>(camX), static_cast<float>(camY));
     drawParticles(p, world, static_cast<float>(camX), static_cast<float>(camY));
+
+    // 夜色/晨昏环境色压在场景与角色上，再由路灯光晕在夜里"点亮"灯周。
+    applyAmbient(fb, world.hour());
+    drawLampGlow(p, world, static_cast<float>(camX), static_cast<float>(camY), sky);
+
     if (hud) {
         drawHud(p, world, fb.width(), fb.height());
+        drawClock(p, world, fb.width());
         if (world.won()) {
             drawWonPanel(p, world, fb.width(), fb.height());
         }

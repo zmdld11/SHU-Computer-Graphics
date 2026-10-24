@@ -37,6 +37,32 @@ public:
         pixels_[i] = pack(color);
     }
 
+    // 半透明画点（src-over 混合）：dst = src*α + dst*(1-α)。
+    // 游戏的夜色叠加/影子/灯光光晕都走它；alpha=0 直接忽略，255 等价 putPixel。
+    // 注意混合要读回原像素，比 putPixel 多一次访存，只用于少量半透明层。
+    void blendPixel(int x, int y, const Color& color, std::uint8_t alpha) {
+        assertSizeInvariant();
+        if (x < 0 || x >= width_ || y < 0 || y >= height_ || alpha == 0) {
+            return;
+        }
+        const std::size_t i = static_cast<std::size_t>(y) * static_cast<std::size_t>(width_) +
+                              static_cast<std::size_t>(x);
+        if (alpha == 255) {
+            pixels_[i] = pack(color);
+            return;
+        }
+        const std::uint32_t d = pixels_[i];
+        const std::uint32_t dr = d & 0xFFu;
+        const std::uint32_t dg = (d >> 8) & 0xFFu;
+        const std::uint32_t db = (d >> 16) & 0xFFu;
+        const std::uint32_t a = alpha;
+        const std::uint32_t inv = 255u - a;
+        const std::uint32_t r = (static_cast<std::uint32_t>(color.r) * a + dr * inv + 127) / 255u;
+        const std::uint32_t g = (static_cast<std::uint32_t>(color.g) * a + dg * inv + 127) / 255u;
+        const std::uint32_t b = (static_cast<std::uint32_t>(color.b) * a + db * inv + 127) / 255u;
+        pixels_[i] = static_cast<std::uint32_t>(r) | (g << 8) | (b << 16) | (0xFFu << 24);
+    }
+
     Color pixel(int x, int y) const {
         assertSizeInvariant();
         if (x < 0 || x >= width_ || y < 0 || y >= height_) {
@@ -56,6 +82,12 @@ public:
     // 填充第 y 行闭区间 [x0,x1]（自动夹边界）。扫描线填充/种子填充按 span 落色，
     // 每次只需打包一次颜色，省掉逐像素的边界判断与 RGBA 打包。
     void fillSpan(int y, int x0, int x1, const Color& color);
+
+    // 半透明版本：整行 src-over 混合。影子/夜色走扫描线时用它。
+    void blendSpan(int y, int x0, int x1, const Color& color, std::uint8_t alpha);
+
+    // 半透明矩形：闭区间 [x0,x1]×[y0,y1]，自动夹边界。全屏夜色/转场淡入淡出用。
+    void blendRect(int x0, int y0, int x1, int y1, const Color& color, std::uint8_t alpha);
 
     // 把 src 第 y 行的 [x0,x1] 整段拷贝到本画布同一行（闭区间，自动夹边界）。
     // 裁剪常驻显示层用它替代逐像素 pixel()+putPixel()。

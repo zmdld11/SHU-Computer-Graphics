@@ -76,6 +76,49 @@ void FrameBuffer::fillSpan(int y, int x0, int x1, const Color& color) {
     std::fill(row + xa, row + xb + 1, pack(color));
 }
 
+void FrameBuffer::blendSpan(int y, int x0, int x1, const Color& color, std::uint8_t alpha) {
+    if (y < 0 || y >= height_ || x1 < x0) {
+        return;
+    }
+    const int xa = std::max(0, x0);
+    const int xb = std::min(width_ - 1, x1);
+    if (xa > xb) {
+        return;
+    }
+    if (alpha >= 255) {
+        fillSpan(y, xa, xb, color);
+        return;
+    }
+    auto* row = pixels_.data() + rowOffset(width_, y);
+    const std::uint32_t a = alpha;
+    const std::uint32_t inv = 255u - a;
+    const std::uint32_t cr = static_cast<std::uint32_t>(color.r) * a;
+    const std::uint32_t cg = static_cast<std::uint32_t>(color.g) * a;
+    const std::uint32_t cb = static_cast<std::uint32_t>(color.b) * a;
+    for (int x = xa; x <= xb; ++x) {
+        const std::uint32_t d = row[x];
+        const std::uint32_t r = (cr + (d & 0xFFu) * inv + 127) / 255u;
+        const std::uint32_t g = (cg + ((d >> 8) & 0xFFu) * inv + 127) / 255u;
+        const std::uint32_t b = (cb + ((d >> 16) & 0xFFu) * inv + 127) / 255u;
+        row[x] = r | (g << 8) | (b << 16) | (0xFFu << 24);
+    }
+}
+
+void FrameBuffer::blendRect(int x0, int y0, int x1, int y1, const Color& color,
+                            std::uint8_t alpha) {
+    if (x1 < x0 || y1 < y0 || alpha == 0) {
+        return;
+    }
+    const int ya = std::max(0, y0);
+    const int yb = std::min(height_ - 1, y1);
+    if (ya > yb) {
+        return;
+    }
+    for (int y = ya; y <= yb; ++y) {
+        blendSpan(y, x0, x1, color, alpha);
+    }
+}
+
 void FrameBuffer::copyRectFrom(const FrameBuffer& src, int srcX, int srcY, int w, int h,
                                int dstX, int dstY) {
     if (w <= 0 || h <= 0) {

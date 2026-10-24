@@ -53,11 +53,16 @@ constexpr int kPathX1 = 952;
 constexpr int kPathY0 = 608;
 constexpr int kPathY1 = 672;
 
-// 椭圆池塘与伸进水的木栈道（栈道是水面上唯一可行走的格子）。
+// 池塘与伸进水的木栈道（栈道是水面上唯一可行走的格子）。
 constexpr float kPondCx = 1120.0f;
 constexpr float kPondCy = 576.0f;
 constexpr float kPondRx = 192.0f;
 constexpr float kPondRy = 224.0f;
+
+// 路灯（夜间点光源）：立在土路与栈道岔口的草地上，灯头在 y-52。
+constexpr float kLampX = 720.0f;
+constexpr float kLampY = 560.0f;
+constexpr float kLampBulbY = kLampY - 52.0f;
 
 constexpr int kDockCol = 27;
 constexpr int kDockRow = 19;

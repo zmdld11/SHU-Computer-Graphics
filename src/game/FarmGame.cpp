@@ -198,8 +198,29 @@ bool writeFarmCapture() {
         return false;
     }
 
+    // 昼夜系统验证：同一视角在晨/午/暮/夜四个时刻出图，
+    // 影子方向与长度、路灯亮灭、环境色都由当帧的光照计算决定。
+    // 6.2 与 17.8 落在双光源重叠窗口里（太阳 + 路灯同时投影）。
+    const struct {
+        float hour;
+        const char* name;
+    } dayFrames[] = {{6.2f, "game-day-0612.ppm"},
+                     {12.5f, "game-day-1230.ppm"},
+                     {17.8f, "game-day-1748.ppm"},
+                     {23.0f, "game-night-2300.ppm"}};
+    for (const auto& f : dayFrames) {
+        world.debugSetTime(f.hour);
+        world.debugSetPlayerCell(16, 15);
+        render.frame(view, world, true);
+        if (!cg::writePPM(f.name, view)) {
+            return false;
+        }
+    }
+
     std::cout << "[game] 已写出 game-background.ppm / game-layer-1..6.ppm / "
-                 "game-world.ppm / game-pond.ppm / game-farm.ppm" << std::endl;
+                 "game-world.ppm / game-pond.ppm / game-farm.ppm / "
+                 "game-day-0612|1230|1748 / game-night-2300.ppm"
+              << std::endl;
     return true;
 }
 

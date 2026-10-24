@@ -12,6 +12,10 @@ namespace {
 
 constexpr float kPi = 3.14159265358979f;
 
+float lerp(float a, float b, float t) {
+    return a + (b - a) * std::clamp(t, 0.0f, 1.0f);
+}
+
 float distanceSq(FPoint a, FPoint b) {
     const float dx = a.x - b.x;
     const float dy = a.y - b.y;
@@ -26,6 +30,71 @@ FPoint bezierPoint(FPoint p0, FPoint p1, FPoint p2, float t) {
 }
 
 } // namespace
+
+SkyState skyAt(float hour) {
+    SkyState s;
+    hour = std::fmod(hour + 24.0f, 24.0f);
+    if (hour >= 6.0f && hour <= 18.0f) {
+        s.sunUp = true;
+        s.sunPhase = (hour - 6.0f) / 12.0f;
+        s.sunElevation = std::sin(kPi * s.sunPhase);
+    }
+    // 路灯 17:30 亮到次日 6:30，两端各 1 小时渐亮/渐灭。
+    if (hour >= 17.5f || hour < 6.5f) {
+        if (hour >= 17.5f && hour < 18.5f) {
+            s.lampIntensity = hour - 17.5f;
+        } else if (hour >= 18.5f || hour < 5.5f) {
+            s.lampIntensity = 1.0f;
+        } else {
+            s.lampIntensity = 1.0f - (hour - 5.5f);
+        }
+    }
+    return s;
+}
+
+FPoint sunShadowVec(float hour) {
+    const SkyState s = skyAt(hour);
+    if (!s.sunUp) {
+        return {0.0f, 0.0f};
+    }
+    // 高度角越低影子拉得越长；方位反着太阳：早晨朝西，傍晚朝东，全天略向南偏。
+    const float stretch = lerp(1.9f, 0.45f, s.sunElevation);
+    const float dx = -std::cos(kPi * s.sunPhase);
+    const float dy = 0.42f;
+    const float len = std::sqrt(dx * dx + dy * dy);
+    return {dx / len * stretch, dy / len * stretch};
+}
+
+void ambientTintAt(float hour, AmbientTint& blue, AmbientTint& warm) {
+    hour = std::fmod(hour + 24.0f, 24.0f);
+    float b;
+    if (hour < 4.5f) {
+        b = 1.0f;
+    } else if (hour < 7.5f) {
+        b = 1.0f - (hour - 4.5f) / 3.0f;
+    } else if (hour < 16.5f) {
+        b = 0.0f;
+    } else if (hour < 19.5f) {
+        b = (hour - 16.5f) / 3.0f;
+    } else {
+        b = 1.0f;
+    }
+    blue.r = 16;
+    blue.g = 24;
+    blue.b = 60;
+    blue.alpha = static_cast<std::uint8_t>(b * 108.0f);
+
+    float w = 0.0f;
+    if (hour > 5.0f && hour < 6.5f) {
+        w = 1.0f - std::fabs(hour - 5.75f) / 0.75f;
+    } else if (hour > 17.5f && hour < 19.0f) {
+        w = 1.0f - std::fabs(hour - 18.25f) / 0.75f;
+    }
+    warm.r = 255;
+    warm.g = 132;
+    warm.b = 48;
+    warm.alpha = static_cast<std::uint8_t>(std::clamp(w, 0.0f, 1.0f) * 46.0f);
+}
 
 FarmWorld::FarmWorld() {
     reset();
@@ -46,6 +115,8 @@ void FarmWorld::reset() {
     inventory_ = Inventory{};
     won_ = false;
     playSeconds_ = 0.0f;
+    dayTime_ = 70.0f;
+    day_ = 1;
     fishState_ = FishState::Idle;
     fishTimer_ = 0.0f;
     fishWait_ = 0.0f;
@@ -75,6 +146,11 @@ void FarmWorld::update(float dt) {
         return;
     }
     playSeconds_ += dt;
+    dayTime_ += dt;
+    if (dayTime_ >= kDayLength) {
+        dayTime_ -= kDayLength;
+        ++day_;
+    }
     updateCrops(dt);
     updateFishing(dt);
 
@@ -653,6 +729,11 @@ void FarmWorld::debugSetPlayerCell(int col, int row) {
     waypointIndex_ = 0;
     moving_ = false;
     updateCamera(0.0f, true);
+}
+
+void FarmWorld::debugSetTime(float hour) {
+    hour = std::fmod(hour + 24.0f, 24.0f);
+    dayTime_ = hour * kDayLength / 24.0f;
 }
 
 void FarmWorld::debugAddInventory(int kind, int count) {
