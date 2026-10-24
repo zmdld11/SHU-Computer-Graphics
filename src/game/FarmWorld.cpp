@@ -519,17 +519,16 @@ void FarmWorld::onClick(FPoint worldPos) {
         return;
     }
 
-    // 钓鱼期间点击只用于收竿：咬钩窗口内点水面算钓到，其余忽略。
+    // 钓鱼期间点击只用于收竿：咬钩窗口内点哪儿都算提竿——只认水面太苛刻，
+    // 手一抖点到岸边或鱼漂外就跑鱼；等待/抛竿期间的点击仍忽略。
     if (fishState_ == FishState::Biting) {
-        if (inPond(worldPos.x, worldPos.y, 24.0f)) {
-            fishState_ = FishState::Caught;
-            fishTimer_ = 0.0f;
-            inventory_.fish++;
-            addParticles(ParticleType::Droplet, bobberTarget_, 14);
-            addParticles(ParticleType::Ring, bobberTarget_, 2);
-            if (inventory_.meetsOrder()) {
-                won_ = true;
-            }
+        fishState_ = FishState::Caught;
+        fishTimer_ = 0.0f;
+        inventory_.fish++;
+        addParticles(ParticleType::Droplet, bobberTarget_, 14);
+        addParticles(ParticleType::Ring, bobberTarget_, 2);
+        if (inventory_.meetsOrder()) {
+            won_ = true;
         }
         return;
     }

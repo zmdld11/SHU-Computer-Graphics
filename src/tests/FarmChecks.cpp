@@ -164,6 +164,15 @@ int runFarmChecks() {
     expect(world.inventory().fish == fishBefore + 1, "game: 钓到鱼 +1");
     runFor(1.1f);
 
+    // 咬钩窗口内点远处（不在池塘）也判提竿：点偏不该跑鱼
+    world.onClick({kPondCx, kPondCy + 80.0f});
+    runFor(0.6f + world.fishWaitSeconds() + 0.1f);
+    expect(world.fishState() == FishState::Biting, "game: 第三次进入咬钩");
+    world.onClick(plotCenter(0));
+    expect(world.fishState() == FishState::Caught, "game: 窗口内点远处也提竿");
+    expect(world.inventory().fish == fishBefore + 2, "game: 远处提竿同样鱼 +1");
+    runFor(1.1f);
+
     // 钓鱼期间锁移动
     world.onClick({kPondCx, kPondCy + 80.0f});
     expect(world.fishState() == FishState::Casting, "game: 收竿后可再抛");

@@ -1200,6 +1200,53 @@ void drawSeedIcon(Painter& p, int kind, FPoint c) {
     }
 }
 
+// 钓鱼操作提示条：贴着热键栏上方，按钓鱼状态换文案。
+// 试玩反馈"鱼钓不上来"的根因是咬钩窗口没有任何操作指引——提示条常驻钓鱼全程。
+void drawFishingHint(Painter& p, const FarmWorld& world, int viewW, int viewH) {
+    const char* s = nullptr;
+    bool urgent = false;
+    switch (world.fishState()) {
+    case FishState::Casting:
+        s = "抛竿…";
+        break;
+    case FishState::Waiting:
+        s = "等鱼上钩…浮标一沉就点击！";
+        break;
+    case FishState::Biting:
+        s = "咬钩了！！快点击提竿！！";
+        urgent = true;
+        break;
+    case FishState::Caught:
+        s = "钓到了！";
+        break;
+    case FishState::Missed:
+        s = "跑掉了…等浮标再沉再点";
+        break;
+    case FishState::Idle:
+        return;
+    }
+
+    const int w = 320;
+    const int h = 34;
+    const int x = viewW / 2 - w / 2;
+    const int y = viewH - kHudSlot - 18 - h - 8;
+    p.rect(static_cast<float>(x + 4), static_cast<float>(y + 5), static_cast<float>(w),
+           static_cast<float>(h), kBorderGrass);
+    p.rect(static_cast<float>(x), static_cast<float>(y), static_cast<float>(w),
+           static_cast<float>(h), kOutline);
+    p.rect(static_cast<float>(x + 2), static_cast<float>(y + 2),
+           static_cast<float>(w - 4), static_cast<float>(h - 4), kWood);
+    p.rect(static_cast<float>(x + 6), static_cast<float>(y + 6),
+           static_cast<float>(w - 12), 2.0f, kWoodLight);
+
+    // 咬钩时红白交替闪烁，逼玩家在 0.8 秒窗口里做出反应。
+    const Color tc = !urgent ? kCream
+                             : ((static_cast<int>(world.animTime() * 7.0f) & 1) != 0
+                                    ? Color(206, 76, 54)
+                                    : kWhite);
+    text::drawText(p.fb(), x + (w - text::textWidth(s)) / 2, y + 11, s, tc);
+}
+
 void drawHud(Painter& p, const FarmWorld& world, int viewW, int viewH) {
     drawOrderBoard(p, world, viewW);
 
@@ -1269,6 +1316,8 @@ void drawHud(Painter& p, const FarmWorld& world, int viewW, int viewH) {
                      {static_cast<float>(r.x) + static_cast<float>(r.w) * 0.5f,
                       static_cast<float>(r.y) + static_cast<float>(r.h) * 0.5f + 2.0f});
     }
+
+    drawFishingHint(p, world, viewW, viewH);
 }
 
 // ---------------- 钓鱼与粒子 ----------------
