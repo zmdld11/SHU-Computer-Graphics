@@ -41,6 +41,7 @@ private:
     FrameBuffer background_;
     FrameBuffer cabinBackground_; // 小屋室内：一次性烘焙，每帧按相机拷贝
     FrameBuffer farmLayer_;
+    FrameBuffer dragonMask_;      // 胖龙剪影蒙版：影子统一透明度盖章用，按需扩容
     RectI farmBakeRect_{};
     std::uint64_t bakedFarmVersion_ = 0;
 };

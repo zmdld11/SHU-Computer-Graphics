@@ -115,6 +115,11 @@ public:
     int py(float v) const {
         return static_cast<int>(std::lround((v - oy_) * scale_));
     }
+    float scale() const { return scale_; }
+    // 像素 → 设计坐标的逆映射（py 的反函数），影子蒙版按目标行反推源行用。
+    float unpy(int v) const {
+        return static_cast<float>(v) / scale_ + oy_;
+    }
     FrameBuffer& fb() const { return fb_; }
     Color sample(float x, float y) const { return fb_.pixel(px(x), py(y)); }
 
@@ -1081,6 +1086,45 @@ void drawDragon(Painter& p, FPoint pos, bool moving, float walkPhase, float time
              10);
 }
 
+// 龙的剪影：与 drawDragon 同一套外轮廓几何（尾/翅/脚/身/手/头/角），
+// 全部实心同色，省略眼/肚皮等内部细节。几何改动需与 drawDragon 保持同步。
+void drawDragonSilhouette(Painter& p, FPoint pos, int facing) {
+    const float y = pos.y;
+    const float f = facing < 0 ? -1.0f : 1.0f;
+    auto X = [x = pos.x, f](float dx) { return x + dx * f; };
+
+    // 尾巴
+    p.ellipse(X(-22.0f), y - 15.0f, 10.0f, 8.0f, Color::White(), 20);
+    p.ellipse(X(-34.0f), y - 11.0f, 8.0f, 7.0f, Color::White(), 18);
+    p.ellipse(X(-45.0f), y - 15.0f, 7.0f, 6.0f, Color::White(), 16);
+    p.polygon({{X(-50.0f), y - 14.0f}, {X(-58.0f), y - 21.0f},
+               {X(-63.0f), y - 12.0f}, {X(-54.0f), y - 6.0f}},
+              Color::White(), Color::White(), 0.0f);
+    // 翅膀
+    for (float s : {-1.0f, 1.0f}) {
+        p.polygon({{X(s * 15.0f), y - 38.0f}, {X(s * 32.0f), y - 57.0f},
+                   {X(s * 41.0f), y - 43.0f}, {X(s * 31.0f), y - 29.0f},
+                   {X(s * 18.0f), y - 32.0f}},
+                  Color::White(), Color::White(), 0.0f);
+    }
+    // 脚
+    p.ellipse(X(-11.0f), y - 3.0f, 9.0f, 5.5f, Color::White(), 20);
+    p.ellipse(X(11.0f), y - 3.0f, 9.0f, 5.5f, Color::White(), 20);
+    // 身体（比描边版各放宽 1px，盖住描边宽度）
+    p.ellipse(pos.x, y - 26.0f, 21.0f, 24.0f, Color::White(), 40);
+    // 手
+    p.ellipse(X(-19.0f), y - 30.0f, 6.5f, 10.0f, Color::White(), 20);
+    p.ellipse(X(19.0f), y - 30.0f, 6.5f, 10.0f, Color::White(), 20);
+    // 头
+    p.ellipse(pos.x, y - 49.0f, 19.0f, 17.0f, Color::White(), 36);
+    // 角
+    for (float s : {-1.0f, 1.0f}) {
+        p.polygon({{X(s * 13.0f), y - 61.0f}, {X(s * 6.0f), y - 64.0f},
+                   {X(s * 9.0f), y - 74.0f}},
+                  Color::White(), Color::White(), 0.0f);
+    }
+}
+
 // ---------------- 悬停提示 ----------------
 
 void drawBracket(Painter& p, float x, float y, float sx, float sy, float len) {
@@ -1543,10 +1587,11 @@ constexpr Color kShadowTint{18, 22, 14};
 
 // 路灯（点光源）的影子：从灯位向外投射的四边形本影近似。
 // 基座两点撑开、远端收窄，长度随物体高度和到灯距离变化，每帧重算。
-void lampShadowQuad(Painter& p, float baseX, float baseY, float radius, float height,
-                    std::uint8_t alpha) {
-    const float dx = baseX - kLampX;
-    const float dy = baseY - kLampY;
+// lampX/lampY 必须与 baseX/baseY 同一坐标系（视口坐标），否则镜头一动影子就偏。
+void lampShadowQuad(Painter& p, float baseX, float baseY, float lampX, float lampY,
+                    float radius, float height, std::uint8_t alpha) {
+    const float dx = baseX - lampX;
+    const float dy = baseY - lampY;
     const float dist = std::sqrt(dx * dx + dy * dy);
     if (dist < 24.0f) {
         return;
@@ -1567,13 +1612,64 @@ void lampShadowQuad(Painter& p, float baseX, float baseY, float radius, float he
     p.polygon(quad, kShadowTint, kShadowTint, 0.0f, alpha);
 }
 
+// 胖龙的剪影影子：先把剪影以不透明色画进离屏蒙版，再以统一 alpha 盖到主画布。
+// 不能直接拿半透明形状往上叠——龙由 20 多个形状组成，肚皮、头身交界等重叠区
+// 会被多次 src-over 混合而明显更深，剪影发花；蒙版法保证影子浓度处处一致。
+// 盖章时以脚底为轴垂直压扁（太阳越高压得越扁），再整体平移 offset 投到地面。
+void stampDragonShadow(Painter& p, FrameBuffer& mask, FPoint base, FPoint offset,
+                       float squash, std::uint8_t alpha, int facing) {
+    // 龙最外包围（与 drawDragon/drawDragonSilhouette 几何一致）：
+    // 尾尖最远 ±63、角顶 y-74、脚底 y+8，四周各留 3px 余量。
+    const float minX = base.x - 66.0f;
+    const float maxX = base.x + 66.0f;
+    const float minY = base.y - 78.0f;
+    const float maxY = base.y + 9.0f;
+    const float scale = p.scale();
+    const int mw = std::max(1, static_cast<int>(std::lround((maxX - minX) * scale)));
+    const int mh = std::max(1, static_cast<int>(std::lround((maxY - minY) * scale)));
+    mask.resize(mw, mh);
+    mask.fillRect(0, 0, mw - 1, mh - 1, Color::Black());
+
+    Painter mp(mask, scale, {minX, minY});
+    drawDragonSilhouette(mp, base, facing);
+
+    // 目标行反推源行（最近邻采样，避免压扁后多行叠进一行导致竖向加深），
+    // 每个目标像素只混一次影子色。
+    FrameBuffer& fb = p.fb();
+    const float dTop = base.y + (minY - base.y) * squash + offset.y;
+    const float dBot = base.y + (maxY - base.y) * squash + offset.y;
+    const int fy0 = std::max(0, p.py(dTop));
+    const int fy1 = std::min(fb.height() - 1, p.py(dBot));
+    for (int fy = fy0; fy <= fy1; ++fy) {
+        const float sy = base.y + (p.unpy(fy) - offset.y - base.y) / squash;
+        const int my = static_cast<int>(std::lround((sy - minY) * scale - 0.5f));
+        if (my < 0 || my >= mh) {
+            continue;
+        }
+        for (int mx = 0; mx < mw; ++mx) {
+            if (mask.pixel(mx, my) == Color::Black()) {
+                continue; // 蒙版未覆盖
+            }
+            const float sx = minX + (static_cast<float>(mx) + 0.5f) / scale;
+            const int fx = p.px(sx + offset.x);
+            if (fx < 0 || fx >= fb.width()) {
+                continue;
+            }
+            fb.blendPixel(fx, fy, kShadowTint, alpha);
+        }
+    }
+}
+
 // 每帧把所有投影体的影子重画一遍：白天太阳方向光（晨昏拉长），夜里路灯点光，
 // 晨昏两套同时画、各自减淡。影子只叠在背景上，实体随后绘制。
 void drawShadows(Painter& p, const FarmWorld& world, float camX, float camY,
-                 const SkyState& sky) {
+                 const SkyState& sky, FrameBuffer& dragonMask) {
     const bool dual = sky.sunUp && sky.lampIntensity > 0.01f;
     const float ox = -camX;
     const float oy = -camY;
+    // 路灯的视口坐标：与各投影体（已减相机）同一坐标系，方向计算才不错位。
+    const float lampVX = kLampX + ox;
+    const float lampVY = kLampY + oy;
 
     std::uint8_t sunA = 0;
     FPoint sv{0.0f, 0.0f};
@@ -1607,7 +1703,7 @@ void drawShadows(Painter& p, const FarmWorld& world, float camX, float camY,
                       kShadowTint, 26, sunA);
         }
         if (lampA > 0) {
-            lampShadowQuad(p, x, y, 34.0f * t.scale, h, lampA);
+            lampShadowQuad(p, x, y, lampVX, lampVY, 34.0f * t.scale, h, lampA);
         }
     }
     // 灌木
@@ -1623,7 +1719,7 @@ void drawShadows(Painter& p, const FarmWorld& world, float camX, float camY,
                       20, sunA);
         }
         if (lampA > 0) {
-            lampShadowQuad(p, x, y, 15.0f * b[2], h, lampA);
+            lampShadowQuad(p, x, y, lampVX, lampVY, 15.0f * b[2], h, lampA);
         }
     }
     // 作物：田里长出来的都投一点影子，成熟期最高。
@@ -1640,7 +1736,7 @@ void drawShadows(Painter& p, const FarmWorld& world, float camX, float camY,
             p.ellipse(x + sv.x * h, y + sv.y * h, 17.0f, 5.5f, kShadowTint, 18, sunA);
         }
         if (lampA > 0) {
-            lampShadowQuad(p, x, y, 12.0f, h, lampA);
+            lampShadowQuad(p, x, y, lampVX, lampVY, 12.0f, h, lampA);
         }
     }
     // 木桶
@@ -1652,19 +1748,31 @@ void drawShadows(Painter& p, const FarmWorld& world, float camX, float camY,
                       sunA);
         }
         if (lampA > 0) {
-            lampShadowQuad(p, x, y, 9.0f, 20.0f, lampA);
+            lampShadowQuad(p, x, y, lampVX, lampVY, 9.0f, 20.0f, lampA);
         }
     }
-    // 胖龙：影子跟着角色走，随时反映太阳位置。
+    // 胖龙：影子就是龙的剪影（离屏蒙版统一透明度盖章），太阳越高压得越扁，
+    // 晨昏立起来拉长；夜里换成沿路灯方向外投的剪影，长度与灯影四边形同一套公式。
     {
-        const float x = world.playerPos().x + ox;
-        const float y = world.playerPos().y + 1.0f + oy;
+        const FPoint base{world.playerPos().x + ox, world.playerPos().y + 1.0f + oy};
         if (sunA > 0) {
-            p.ellipse(x + sv.x * 44.0f, y + sv.y * 44.0f, 17.0f, 6.0f, kShadowTint, 22,
-                      sunA);
+            const float squash = 0.75f - 0.45f * sky.sunElevation;
+            stampDragonShadow(p, dragonMask, base, {sv.x * 46.0f, sv.y * 46.0f}, squash,
+                              sunA, world.facing());
         }
         if (lampA > 0) {
-            lampShadowQuad(p, x, y, 12.0f, 44.0f, lampA);
+            const float dx = base.x - lampVX;
+            const float dy = base.y - lampVY;
+            const float dist = std::sqrt(dx * dx + dy * dy);
+            if (dist >= 24.0f) {
+                const float ux = dx / dist;
+                const float uy = dy / dist;
+                const float len =
+                    std::clamp(20.0f + 46.0f * (0.9f + dist * 0.0035f), 40.0f, 340.0f);
+                stampDragonShadow(p, dragonMask, base,
+                                  {ux * len * 0.55f, uy * len * 0.55f}, 0.7f, lampA,
+                                  world.facing());
+            }
         }
     }
 }
@@ -1738,7 +1846,6 @@ void drawCabinRoom(Painter& p) {
 
     // 地板：横向木条 + 板缝。
     p.rect(32.0f, 64.0f, W - 64.0f, H - 128.0f, kWood);
-    std::uint32_t h = hash2(7, 13);
     for (int row = 0; row < 17; ++row) {
         const float y = 64.0f + static_cast<float>(row) * 32.0f;
         p.rect(32.0f, y + 30.0f, W - 64.0f, 2.0f, kWoodDark);
@@ -1897,7 +2004,8 @@ void drawWindowSky(Painter& p, const FarmWorld& world, float camX, float camY) {
 } // namespace
 
 FarmRender::FarmRender()
-    : background_(kWorldW, kWorldH), farmLayer_(1, 1), cabinBackground_(1, 1) {}
+    : background_(kWorldW, kWorldH), cabinBackground_(1, 1), farmLayer_(1, 1),
+      dragonMask_(1, 1) {}
 
 void FarmRender::build(const FarmWorld& world) {
     // 静态层：草地/土路/池塘/花草/树木/小屋外观，一次烘成。
@@ -1966,7 +2074,8 @@ void FarmRender::frame(FrameBuffer& fb, const FarmWorld& world, bool hud) {
         drawChimneySmoke(p, world, static_cast<float>(camX), static_cast<float>(camY));
 
         // 影子最先画（贴着背景），晨昏时太阳与路灯两套影子同时出现。
-        drawShadows(p, world, static_cast<float>(camX), static_cast<float>(camY), sky);
+        drawShadows(p, world, static_cast<float>(camX), static_cast<float>(camY), sky,
+                    dragonMask_);
         drawHover(p, world.hover(), static_cast<float>(camX), static_cast<float>(camY),
                   world.animTime());
         drawFishing(p, world, static_cast<float>(camX), static_cast<float>(camY));
