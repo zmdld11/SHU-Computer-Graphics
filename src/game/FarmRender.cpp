@@ -1615,9 +1615,11 @@ void lampShadowQuad(Painter& p, float baseX, float baseY, float lampX, float lam
 // 胖龙的剪影影子：先把剪影以不透明色画进离屏蒙版，再以统一 alpha 盖到主画布。
 // 不能直接拿半透明形状往上叠——龙由 20 多个形状组成，肚皮、头身交界等重叠区
 // 会被多次 src-over 混合而明显更深，剪影发花；蒙版法保证影子浓度处处一致。
-// 盖章时以脚底为轴垂直压扁（太阳越高压得越扁），再整体平移 offset 投到地面。
-void stampDragonShadow(Painter& p, FrameBuffer& mask, FPoint base, FPoint offset,
-                       float squash, std::uint8_t alpha, int facing) {
+// 盖章是真正的地面投影（以脚跟为锚的切变）：高度 h 的剪影点沿影子向量位移
+// sv·h——脚底 h=0 原地不动、影子贴着脚跟，头顶被推得最远；晨昏自动拉长、
+// 正午缩在脚下，影子永远与角色相连。
+void stampDragonShadow(Painter& p, FrameBuffer& mask, FPoint base, FPoint sv,
+                       std::uint8_t alpha, int facing) {
     // 龙最外包围（与 drawDragon/drawDragonSilhouette 几何一致）：
     // 尾尖最远 ±63、角顶 y-74、脚底 y+8，四周各留 3px 余量。
     const float minX = base.x - 66.0f;
@@ -1633,25 +1635,28 @@ void stampDragonShadow(Painter& p, FrameBuffer& mask, FPoint base, FPoint offset
     Painter mp(mask, scale, {minX, minY});
     drawDragonSilhouette(mp, base, facing);
 
-    // 目标行反推源行（最近邻采样，避免压扁后多行叠进一行导致竖向加深），
-    // 每个目标像素只混一次影子色。
+    // 目标行反推源行：dy = base.y + sv.y·h 单调，最近邻采样即可（避免压扁后
+    // 多行叠进一行造成竖向加深），每个目标像素只混一次影子色。
+    // 调用方保证 |sv.y| ≥ 0.35，反推不发散。
     FrameBuffer& fb = p.fb();
-    const float dTop = base.y + (minY - base.y) * squash + offset.y;
-    const float dBot = base.y + (maxY - base.y) * squash + offset.y;
-    const int fy0 = std::max(0, p.py(dTop));
-    const int fy1 = std::min(fb.height() - 1, p.py(dBot));
+    const float dTop = base.y + sv.y * (base.y - maxY);
+    const float dBot = base.y + sv.y * (base.y - minY);
+    const int fy0 = std::max(0, p.py(std::min(dTop, dBot)));
+    const int fy1 = std::min(fb.height() - 1, p.py(std::max(dTop, dBot)));
     for (int fy = fy0; fy <= fy1; ++fy) {
-        const float sy = base.y + (p.unpy(fy) - offset.y - base.y) / squash;
+        const float h = (p.unpy(fy) - base.y) / sv.y; // 目标行对应的离地高度
+        const float sy = base.y - h;                  // 源剪影设计坐标
         const int my = static_cast<int>(std::lround((sy - minY) * scale - 0.5f));
         if (my < 0 || my >= mh) {
             continue;
         }
+        const float shiftX = sv.x * h;
         for (int mx = 0; mx < mw; ++mx) {
             if (mask.pixel(mx, my) == Color::Black()) {
                 continue; // 蒙版未覆盖
             }
             const float sx = minX + (static_cast<float>(mx) + 0.5f) / scale;
-            const int fx = p.px(sx + offset.x);
+            const int fx = p.px(sx + shiftX);
             if (fx < 0 || fx >= fb.width()) {
                 continue;
             }
@@ -1751,27 +1756,27 @@ void drawShadows(Painter& p, const FarmWorld& world, float camX, float camY,
             lampShadowQuad(p, x, y, lampVX, lampVY, 9.0f, 20.0f, lampA);
         }
     }
-    // 胖龙：影子就是龙的剪影（离屏蒙版统一透明度盖章），太阳越高压得越扁，
-    // 晨昏立起来拉长；夜里换成沿路灯方向外投的剪影，长度与灯影四边形同一套公式。
+    // 胖龙：影子就是龙的剪影（离屏蒙版统一透明度盖章），以脚跟为锚做地面投影：
+    // 高度 h 的点沿影子向量位移 sv·h，晨昏被推向西/东拉长、正午缩在脚下；
+    // 夜里影子向量改为"背离路灯方向 × 与灯影四边形相同的生长率"。
     {
         const FPoint base{world.playerPos().x + ox, world.playerPos().y + 1.0f + oy};
         if (sunA > 0) {
-            const float squash = 0.75f - 0.45f * sky.sunElevation;
-            stampDragonShadow(p, dragonMask, base, {sv.x * 46.0f, sv.y * 46.0f}, squash,
-                              sunA, world.facing());
+            stampDragonShadow(p, dragonMask, base, sv, sunA, world.facing());
         }
         if (lampA > 0) {
             const float dx = base.x - lampVX;
             const float dy = base.y - lampVY;
             const float dist = std::sqrt(dx * dx + dy * dy);
             if (dist >= 24.0f) {
-                const float ux = dx / dist;
-                const float uy = dy / dist;
-                const float len =
-                    std::clamp(20.0f + 46.0f * (0.9f + dist * 0.0035f), 40.0f, 340.0f);
-                stampDragonShadow(p, dragonMask, base,
-                                  {ux * len * 0.55f, uy * len * 0.55f}, 0.7f, lampA,
-                                  world.facing());
+                // 高度 h 的点向背离灯的方向位移 h·k（k 与灯影四边形同一生长率）。
+                // 垂直分量接近 0 时投影会在屏幕上压成一条线，钳个下限保住形状。
+                const float k = 0.9f + dist * 0.0035f;
+                FPoint lv{(dx / dist) * k, (dy / dist) * k};
+                if (std::fabs(lv.y) < 0.35f) {
+                    lv.y = lv.y < 0.0f ? -0.35f : 0.35f;
+                }
+                stampDragonShadow(p, dragonMask, base, lv, lampA, world.facing());
             }
         }
     }
