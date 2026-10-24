@@ -34,9 +34,9 @@ cmake --build build
 ./build/cg-engine --bench-ui # 无窗口性能基准（裁剪开/关、凸多边形窗、拖拽帧耗时）
 
 ./build/farm-game                # 直接进入胖龙农场（CLion 选 farm-game 目标即可）
-./build/cg-engine --game         # 同一游戏的命令行入口（M1：全鼠标点选移动）
-./build/cg-engine --game-capture # 无窗口导出纯背景、六张分层帧与 world/pond/farm 预览
-./build/cg-engine --game-smoke   # 无窗口农场自测（格点路径/镜头/重开）
+./build/cg-engine --game         # 同一游戏的命令行入口（点选移动/种植/钓鱼/昼夜/小屋）
+./build/cg-engine --game-capture # 无窗口导出背景、分层帧、昼夜四时刻、特效与室内预览
+./build/cg-engine --game-smoke   # 无窗口农场自测（玩法/钓鱼/昼夜/场景切换 73 项）
 ```
 
 > CLion 打开的是 **`cg-labs` 目录**（`CMakeLists.txt` 所在层）。加载后左上角运行配置选
