@@ -538,6 +538,10 @@ void PaintController::onKey(int key, int action, int mods) {
     if (action != GLFW_PRESS && action != GLFW_REPEAT) {
         return;
     }
+    if (key == GLFW_KEY_Z && (mods & GLFW_MOD_CONTROL) != 0) {
+        handleAction(Act::Undo);
+        return;
+    }
     // 键盘与任务栏按钮共用 handleAction。
     switch (key) {
     case GLFW_KEY_1:
@@ -599,6 +603,15 @@ void PaintController::handleAction(Act a) {
     case Act::CurveType:
         if (mode_ == Mode::Curve) {
             curveBSpline_ = !curveBSpline_;
+            // 同时切换最近一条已提交曲线的类型：按一下就能看到两种样条的差别。
+            for (auto it = shapes_.rbegin(); it != shapes_.rend(); ++it) {
+                if (it->mode == Mode::Curve) {
+                    pushUndo();
+                    it->bspline = curveBSpline_;
+                    markDirty();
+                    break;
+                }
+            }
         }
         break;
     case Act::CurveClose:
@@ -615,7 +628,13 @@ void PaintController::handleAction(Act a) {
     case Act::Color:
         fillColorIdx_ = (fillColorIdx_ + 1) % 6;
         break;
+    case Act::Undo:
+        undo();
+        break;
     case Act::Clear:
+        if (!shapes_.empty()) {
+            pushUndo();
+        }
         shapes_.clear();
         cancelInProgress();
         markDirty();
@@ -629,6 +648,7 @@ void PaintController::handleAction(Act a) {
             bool toggled = false;
             for (auto it = shapes_.rbegin(); it != shapes_.rend(); ++it) {
                 if (it->mode == Mode::Polygon) {
+                    pushUndo();
                     it->filled = !it->filled;
                     toggled = true;
                     markDirty();
@@ -729,6 +749,9 @@ void PaintController::handleAction(Act a) {
             }
             std::sort(toErase.begin(), toErase.end());
             toErase.erase(std::unique(toErase.begin(), toErase.end()), toErase.end());
+            if (!toErase.empty()) {
+                pushUndo();
+            }
             for (auto it = toErase.rbegin(); it != toErase.rend(); ++it) {
                 shapes_.erase(shapes_.begin() + *it);
             }
@@ -759,11 +782,11 @@ void PaintController::buildToolbar(std::vector<ToolButton>& btns) const {
     const int rowH = text::height() + 8;
     const int y1 = 2;
     const int y2 = 2 + rowH + 3;
-    auto add = [&](Act act, const char* label, int x, int y, bool active) {
+    auto add = [&](Act act, const std::string& label, int x, int y, bool active) {
         ToolButton b;
         b.act = act;
         b.label = label;
-        b.w = text::textWidth(label) + 12;
+        b.w = text::textWidth(label.c_str()) + 12;
         b.h = rowH;
         b.x = x;
         b.y = y;
@@ -788,11 +811,12 @@ void PaintController::buildToolbar(std::vector<ToolButton>& btns) const {
         x = add(m.act, m.label, x, y1, mode_ == m.mode);
     }
     x = add(Act::Clear, "E 清屏", x, y1, false);
+    add(Act::Undo, "Ctrl+Z 撤销", x, y1, false);
 
-    // 第二行：属性 + 随模式变化的上下文按钮
-    x = add(Act::Style, "S 线型", 2, y2, false);
-    x = add(Act::Width, "W 线宽", x, y2, false);
-    x = add(Act::Color, "X 颜色", x, y2, false);
+    // 第二行：属性 + 随模式变化的上下文按钮（标签显示当前值）
+    x = add(Act::Style, std::string("S 线型:") + kStyleNames[styleIdx_], 2, y2, false);
+    x = add(Act::Width, "W 线宽:" + std::to_string(kWidths[widthIdx_]), x, y2, false);
+    x = add(Act::Color, std::string("X 颜色:") + kPaletteNames[fillColorIdx_], x, y2, false);
     if (mode_ == Mode::Polygon) {
         x = add(Act::PolyFill, polygonFilled_ ? "F 填充:开" : "F 填充:关", x + 8, y2, true);
         x = add(Act::PolyClose, "右键闭合", x, y2, false);
@@ -833,6 +857,9 @@ std::uint64_t PaintController::toolbarKey(int width) const {
     k |= static_cast<std::uint64_t>(curveBSpline_) << 7;
     k |= static_cast<std::uint64_t>(refManual_) << 8;
     k |= static_cast<std::uint64_t>(dockStage_ > 0) << 9;
+    k |= static_cast<std::uint64_t>(styleIdx_) << 10;
+    k |= static_cast<std::uint64_t>(widthIdx_) << 12;
+    k |= static_cast<std::uint64_t>(fillColorIdx_) << 14;
     return k;
 }
 
@@ -906,6 +933,7 @@ void PaintController::setRectClipWindow(IPoint p1, IPoint p2) {
     if (r.xmax - r.xmin < 8 || r.ymax - r.ymin < 8) {
         return; // 太小的窗口忽略
     }
+    pushUndo();
     clipWin_.kind = ClipWindow::Kind::Rect;
     clipWin_.rect = r;
     clipWin_.valid = true;
@@ -1018,6 +1046,9 @@ FPoint PaintController::activeRefPoint() const {
 }
 
 void PaintController::transformSelected(const geom::Mat3& m, float rotDeg, float scaleF) {
+    if (!selected_.empty()) {
+        pushUndo();
+    }
     for (int idx : selected_) {
         if (idx < 0 || idx >= static_cast<int>(shapes_.size())) {
             continue;
@@ -1041,6 +1072,7 @@ void PaintController::snapshotSelection() {
 
 // 开始整体拖拽：记录锚点并快照选中集合。
 void PaintController::beginXformDrag(IPoint anchor) {
+    beginGesture();
     xformDrag_ = true;
     lastDrag_ = anchor;
     snapshotSelection();
@@ -1048,7 +1080,52 @@ void PaintController::beginXformDrag(IPoint anchor) {
 }
 
 // 入列表并分配稳定 id（种子填充用 parentId 指向所属图形）。
+void PaintController::pushUndo() {
+    if (undoStack_.size() >= 64) {
+        undoStack_.erase(undoStack_.begin());
+    }
+    undoStack_.push_back(DocState{shapes_, nextShapeId_, clipWin_, clipOn_});
+}
+
+void PaintController::undo() {
+    if (undoStack_.empty()) {
+        return;
+    }
+    DocState st = std::move(undoStack_.back());
+    undoStack_.pop_back();
+    shapes_ = std::move(st.shapes);
+    nextShapeId_ = st.nextShapeId;
+    clipWin_ = st.clipWin;
+    clipOn_ = st.clipOn;
+    selected_.clear();
+    handleDrag_ = false;
+    xformDrag_ = false;
+    curveDrag_ = false;
+    dockStage_ = 0;
+    pendingPolygon_.clear();
+    pendingCurve_.clear();
+    pendingClipWin_.clear();
+    dragging_ = false;
+    arcAdjust_ = false;
+    clipRectEdit_ = false;
+    clipPolyEdit_ = false;
+    refPick_ = false;
+    bandSelect_ = false;
+    markDirty();
+    titleDirty_ = true;
+}
+
+void PaintController::beginGesture() { gestureUndoPushed_ = false; }
+
+void PaintController::ensureGestureUndo() {
+    if (!gestureUndoPushed_) {
+        pushUndo();
+        gestureUndoPushed_ = true;
+    }
+}
+
 void PaintController::addShape(Shape s) {
+    pushUndo();
     s.id = nextShapeId_++;
     shapes_.push_back(std::move(s));
 }
@@ -1644,6 +1721,7 @@ void PaintController::drawSelection(FrameBuffer& fb) const {
 
 // 柄拖拽：端点柄改线段参数，bbox 柄以对角为锚缩放；从拖拽起点快照重算。
 void PaintController::applyHandleDrag(IPoint pos) {
+    ensureGestureUndo();
     if (activeHandle_ == SelHandle::EndA || activeHandle_ == SelHandle::EndB) {
         if (handleShapeIdx_ >= 0 && handleShapeIdx_ < static_cast<int>(shapes_.size())) {
             Shape& s = shapes_[handleShapeIdx_];
@@ -1656,6 +1734,14 @@ void PaintController::applyHandleDrag(IPoint pos) {
                 const int q = quantStepLen(dist(pt, other));
                 pt = {other.x + static_cast<int>(std::lround(u.x * q)),
                       other.y + static_cast<int>(std::lround(u.y * q))};
+            }
+            if (shiftHeld_) { // Shift：端点方向吸附 45°（长度不变）
+                const FPoint u = unitVec({static_cast<float>(pt.x - other.x),
+                                          static_cast<float>(pt.y - other.y)});
+                const FPoint sn = snapDir45(u);
+                const float len = dist(pt, other);
+                pt = {other.x + static_cast<int>(std::lround(sn.x * len)),
+                      other.y + static_cast<int>(std::lround(sn.y * len))};
             }
             if (endA) {
                 s.a = pt;
@@ -1678,27 +1764,35 @@ void PaintController::applyHandleDrag(IPoint pos) {
     const bool south = activeHandle_ == SelHandle::S || activeHandle_ == SelHandle::SW ||
                        activeHandle_ == SelHandle::SE;
     // 锚点 = 对角（角柄）/对边（边柄）。
+    const bool centerAnchor = ctrlHeld_;
     const float anchorX =
-        east ? static_cast<float>(b0.xmin)
-             : (west ? static_cast<float>(b0.xmax) : (b0.xmin + b0.xmax) * 0.5f);
+        centerAnchor ? (b0.xmin + b0.xmax) * 0.5f
+                     : (east ? static_cast<float>(b0.xmin)
+                             : (west ? static_cast<float>(b0.xmax)
+                                     : (b0.xmin + b0.xmax) * 0.5f));
     const float anchorY =
-        south ? static_cast<float>(b0.ymin)
-              : (north ? static_cast<float>(b0.ymax) : (b0.ymin + b0.ymax) * 0.5f);
+        centerAnchor ? (b0.ymin + b0.ymax) * 0.5f
+                     : (south ? static_cast<float>(b0.ymin)
+                              : (north ? static_cast<float>(b0.ymax)
+                                       : (b0.ymin + b0.ymax) * 0.5f));
     auto clampAxis = [](float s) { return s < 0.02f ? 0.02f : s; }; // 防翻转/防退化
+    // 中心锚点时参考长度是半宽/半高，缩放比才与鼠标位移一致。
+    const float wRef = centerAnchor ? w0 * 0.5f : w0;
+    const float hRef = centerAnchor ? h0 * 0.5f : h0;
     float sx = 1.0f;
     float sy = 1.0f;
     if (east) {
-        sx = clampAxis((static_cast<float>(pos.x) - anchorX) / w0);
+        sx = clampAxis((static_cast<float>(pos.x) - anchorX) / wRef);
     } else if (west) {
-        sx = clampAxis((anchorX - static_cast<float>(pos.x)) / w0);
+        sx = clampAxis((anchorX - static_cast<float>(pos.x)) / wRef);
     }
     if (south) {
-        sy = clampAxis((static_cast<float>(pos.y) - anchorY) / h0);
+        sy = clampAxis((static_cast<float>(pos.y) - anchorY) / hRef);
     } else if (north) {
-        sy = clampAxis((anchorY - static_cast<float>(pos.y)) / h0);
+        sy = clampAxis((anchorY - static_cast<float>(pos.y)) / hRef);
     }
     float scaleF = 1.0f; // applyToShape 里圆/弧的半径等比因子（仅等比模式用到）
-    if (selectionUniformOnly()) {
+    if (selectionUniformOnly() || shiftHeld_) { // Shift：等比缩放
         const float s = std::max(sx, sy);
         sx = s;
         sy = s;
@@ -1758,6 +1852,7 @@ void PaintController::onMouseButton(int button, int action, int mods) {
             pendingClipWin_.push_back(curr_);
         } else if (button == 1 && press) { // 右键闭合
             if (pendingClipWin_.size() >= 3) {
+                pushUndo();
                 clipWin_.kind = ClipWindow::Kind::ConvexPoly;
                 clipWin_.poly.clear();
                 for (const auto& p : pendingClipWin_) {
@@ -1915,6 +2010,7 @@ void PaintController::onMouseButton(int button, int action, int mods) {
                     const geom::Mat3 m = geom::mul(
                         geom::translate(dockA_.x - pt.x, dockA_.y - pt.y),
                         geom::rotateAbout(pt.x, pt.y, diff * kPiF / 180.0f));
+                    pushUndo();
                     applyToShape(shapes_[idx], m, diff, 1.0f);
                     transformSeedsOfParent(shapes_[idx].id, m, false);
                     dockStage_ = 0;
@@ -1940,6 +2036,7 @@ void PaintController::onMouseButton(int button, int action, int mods) {
                     selected_.end());
                 const SelHandle h = pickHandle(curr_);
                 if (h != SelHandle::None) {
+                    beginGesture();
                     handleDrag_ = true;
                     activeHandle_ = h;
                     handleShapeIdx_ =
@@ -2028,6 +2125,7 @@ void PaintController::onMouseButton(int button, int action, int mods) {
             if (pendingCurve_.empty()) {
                 const auto grab = pickCurveCtrl(curr_);
                 if (grab.first >= 0) {
+                    beginGesture();
                     curveDrag_ = true;
                     dragShapeIdx_ = grab.first;
                     dragCtrlIdx_ = grab.second;
@@ -2055,10 +2153,14 @@ void PaintController::onMouseMove(IPoint pos, int mods) {
     }
     // 拖拽平移：从快照整体平移（零累积），Shift 吸附 45°。
     if (xformDrag_ && mode_ == Mode::Transform && !selected_.empty()) {
+        ensureGestureUndo();
         FPoint off{static_cast<float>(pos.x - lastDrag_.x),
                    static_cast<float>(pos.y - lastDrag_.y)};
         if (shiftHeld_) {
             off = snapDir45(off);
+        } else if (ctrlHeld_) {
+            off.x = std::round(off.x / 10.0f) * 10.0f;
+            off.y = std::round(off.y / 10.0f) * 10.0f;
         }
         const geom::Mat3 m = geom::translate(off.x, off.y);
         for (std::size_t k = 0; k < selected_.size() && k < selSnapshot_.size(); ++k) {
@@ -2075,6 +2177,7 @@ void PaintController::onMouseMove(IPoint pos, int mods) {
     // 曲线控制点拖拽：改参数，提交层重算。
     if (curveDrag_ && mode_ == Mode::Curve && dragShapeIdx_ >= 0 &&
         dragShapeIdx_ < static_cast<int>(shapes_.size())) {
+        ensureGestureUndo();
         auto& curve = shapes_[static_cast<std::size_t>(dragShapeIdx_)].curve;
         if (dragCtrlIdx_ >= 0 && dragCtrlIdx_ < static_cast<int>(curve.size())) {
             curve[static_cast<std::size_t>(dragCtrlIdx_)] = toF(pos);
@@ -2092,7 +2195,7 @@ const std::string& PaintController::title() const {
     std::string& t = titleCache_;
     t +=
         "绘图引擎（实验一/二/三/四） | 1直线 2圆 3圆弧 4多边形 5种子填充 6裁剪 7变换 8曲线 | "
-        "S线型 W线宽 X填充色 E清屏 右键取消 | ";
+        "S线型 W线宽 X填充色 E清屏 Ctrl+Z撤销 右键取消 | ";
     t += kModeNames[static_cast<int>(mode_)];
     switch (mode_) {
     case Mode::Line:
@@ -2133,7 +2236,7 @@ const std::string& PaintController::title() const {
         t += std::to_string(selected_.size());
         t += " 参考点:";
         t += refManual_ ? "指定" : "重心";
-        t += " | 左键选(Shift加选) 空白拖拽框选 拖拽/方向键平移(Shift=45°) 柄缩放(线段拖端点 Ctrl=步进) Del删除 +−缩放 R/T旋转 G参考点 J对接";
+        t += " | 左键选(Shift加选) 空白拖拽框选 平移(Shift=45° Ctrl=10px) 柄缩放(Shift=等比 Ctrl=中心) 线段端点 Ctrl=步进 方向键微移 Del删除 +−缩放 R/T旋转 G参考点 J对接";
         if (refPick_) {
             t += " | 点击画布指定参考点";
         }
@@ -2147,6 +2250,21 @@ const std::string& PaintController::title() const {
     case Mode::Curve:
         t += curveBSpline_ ? " B样条" : " Bezier";
         t += "（B 切换）| 左键连点控制点，右键结束；点住已提交曲线的控制点拖拽调整";
+        if (curveBSpline_) {
+            // 4 点 + 3 次 clamped B 样条与三次 Bezier 基函数等价，提示用户加第 5 点。
+            int ctrlCount = static_cast<int>(pendingCurve_.size());
+            if (ctrlCount == 0) {
+                for (auto it = shapes_.rbegin(); it != shapes_.rend(); ++it) {
+                    if (it->mode == Mode::Curve) {
+                        ctrlCount = static_cast<int>(it->curve.size());
+                        break;
+                    }
+                }
+            }
+            if (ctrlCount == 4) {
+                t += " | 4 点 B 样条与三次 Bezier 等价，加第 5 点才不同";
+            }
+        }
         if (!pendingCurve_.empty()) {
             t += " | 当前 ";
             t += std::to_string(pendingCurve_.size());

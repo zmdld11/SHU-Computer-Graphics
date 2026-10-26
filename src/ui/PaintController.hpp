@@ -33,7 +33,7 @@ public:
     enum class Act {
         None = 0,
         ModeLine, ModeCircle, ModeArc, ModePolygon, ModeSeed, ModeClip, ModeXform, ModeCurve,
-        Style, Width, Color, Clear,
+        Style, Width, Color, Clear, Undo,
         PolyFill, PolyClose,
         CurveType, CurveClose,
         ClipRect, ClipPoly, ClipAlgo, ClipToggle,
@@ -84,6 +84,14 @@ private:
         raster::Rect rect;
         std::vector<FPoint> poly;
         bool valid = false;
+    };
+
+    // 撤销快照：图形列表是值类型，整份文档深拷贝即可，无需改现有结构。
+    struct DocState {
+        std::vector<Shape> shapes;
+        std::uint64_t nextShapeId = 1;
+        ClipWindow clipWin;
+        bool clipOn = false;
     };
 
     // ---- 绘制 ----
@@ -143,6 +151,14 @@ private:
     void closePolygon();
     void cancelInProgress();
     void setRectClipWindow(IPoint p1, IPoint p2);
+
+    // ---- 撤销（文档快照栈） ----
+    void pushUndo();          // 改动前记录一份文档
+    void undo();              // 恢复上一份文档
+    void beginGesture();      // 手势开始：下一次真正改动时才压栈
+    void ensureGestureUndo(); // 手势内首次改动前压栈
+    std::vector<DocState> undoStack_;
+    bool gestureUndoPushed_ = false;
 
     // ---- 曲线 ----
     void commitCurve();

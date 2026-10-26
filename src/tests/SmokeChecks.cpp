@@ -1121,6 +1121,78 @@ int runAlgorithmSelfChecks() {
         expect(canvas.pixel(450, 450) == Color::Black(), "tb: 清屏按钮清屏");
     }
 
+    // ================= 撤销（Ctrl+Z）与属性按钮反馈 =================
+    {
+        PaintController ctrl;
+        FrameBuffer canvas(kWidth, kHeight);
+        auto clickBtn = [&](const std::string& label) {
+            for (const auto& b : ctrl.toolbarButtons()) {
+                if (b.label == label) {
+                    ctrl.onMouseMove({b.x + b.w / 2, b.y + b.h / 2});
+                    ctrl.onMouseButton(0, GLFW_PRESS);
+                    ctrl.onMouseButton(0, GLFW_RELEASE);
+                    return true;
+                }
+            }
+            return false;
+        };
+
+        // 画一条水平线 → 撤销 → 像素恢复背景
+        ctrl.onKey(GLFW_KEY_1, GLFW_PRESS);
+        ctrl.onMouseMove({150, 520});
+        ctrl.onMouseButton(0, GLFW_PRESS);
+        ctrl.onMouseMove({350, 520});
+        ctrl.onMouseButton(0, GLFW_RELEASE);
+        ctrl.render(canvas);
+        expect(canvas.pixel(250, 520) == Color::White(), "undo: 画线已提交");
+        ctrl.onKey(GLFW_KEY_Z, GLFW_PRESS, GLFW_MOD_CONTROL);
+        ctrl.render(canvas);
+        expect(canvas.pixel(250, 520) == Color::Black(), "undo: Ctrl+Z 撤销新增图形");
+        ctrl.onKey(GLFW_KEY_Z, GLFW_PRESS, GLFW_MOD_CONTROL);
+        ctrl.render(canvas);
+        expect(canvas.pixel(250, 520) == Color::Black(), "undo: 空栈再撤销不崩溃");
+
+        // 选中 → 删除 → 撤销恢复
+        ctrl.onMouseMove({150, 520});
+        ctrl.onMouseButton(0, GLFW_PRESS);
+        ctrl.onMouseMove({350, 520});
+        ctrl.onMouseButton(0, GLFW_RELEASE);
+        ctrl.onKey(GLFW_KEY_7, GLFW_PRESS);
+        ctrl.onMouseMove({250, 520});
+        ctrl.onMouseButton(0, GLFW_PRESS);
+        ctrl.onMouseButton(0, GLFW_RELEASE);
+        ctrl.onKey(GLFW_KEY_DELETE, GLFW_PRESS);
+        ctrl.onMouseMove({700, 560}); // 光标移开：预览层十字会盖住探测像素
+        ctrl.render(canvas);
+        expect(canvas.pixel(250, 520) == Color::Black(), "undo: 删除选中图形");
+        ctrl.onKey(GLFW_KEY_Z, GLFW_PRESS, GLFW_MOD_CONTROL);
+        ctrl.render(canvas);
+        expect(canvas.pixel(250, 520) == Color::White(), "undo: 撤销删除");
+
+        // 属性按钮：标签显示当前值，点击后立即变化
+        expect(clickBtn("S 线型:实线"), "tb: 线型按钮初始标签");
+        expect(ctrl.toolbarButtons()[0].label.size() > 0, "tb: 按钮布局可读");
+        bool styleChanged = false;
+        for (const auto& b : ctrl.toolbarButtons()) {
+            if (b.label == "S 线型:虚线") {
+                styleChanged = true;
+            }
+        }
+        expect(styleChanged, "tb: 线型按钮点击后标签变为虚线");
+
+        // 曲线：5 个控制点 + B 键 → 最近曲线切换为 B 样条
+        ctrl.onKey(GLFW_KEY_8, GLFW_PRESS);
+        const IPoint cp[5] = {{300, 460}, {380, 380}, {480, 470}, {560, 380}, {620, 450}};
+        for (const auto& pt : cp) {
+            ctrl.onMouseMove(pt);
+            ctrl.onMouseButton(0, GLFW_PRESS);
+            ctrl.onMouseButton(0, GLFW_RELEASE);
+        }
+        ctrl.onMouseButton(1, GLFW_PRESS);
+        expect(clickBtn("B 样条:关"), "tb: 找到样条切换按钮");
+        expect(ctrl.title().find("B样条") != std::string::npos, "curve: B 键切到 B 样条");
+    }
+
     // ================= 越界绘制防护（画布外坐标不崩溃，落点被安全钳制） =================
     {
         FrameBuffer oob(kWidth, kHeight);
