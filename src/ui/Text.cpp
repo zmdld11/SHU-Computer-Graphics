@@ -1,6 +1,4 @@
-// Text.cpp
-// 实现系统字体栅格化：GDI GetGlyphOutlineW 取每个字符的 1bpp 点阵并懒缓存，drawText 逐像素
-// 写入 FrameBuffer。文字仍属于画布内容，smoke 断言与 PPM 导出所见即所得。
+// Text.cpp — 系统字体栅格化：GDI GetGlyphOutlineW 取 1bpp 点阵并懒缓存，逐像素写入 FrameBuffer。
 #include "ui/Text.hpp"
 
 #include <map>
@@ -75,8 +73,7 @@ const GlyphBitmap& glyph(wchar_t ch) {
         g.h = static_cast<int>(gm.gmBlackBoxY);
         g.originY = static_cast<int>(gm.gmptGlyphOrigin.y);
         g.advanceX = static_cast<int>(gm.gmCellIncX);
-        // 两次调用的度量可能不一致（字体回退/驱动异常）：按黑盒尺寸核算缓冲，
-        // 不够就弃用点阵只留步进宽，防止 drawText 里 line[col/8] 越界读
+        // 两次调用的度量可能不一致：按黑盒尺寸核算缓冲，不够就弃用点阵防越界。
         const std::size_t rowBytes = (static_cast<std::size_t>(g.w) + 31) / 32 * 4;
         if (rowBytes * static_cast<std::size_t>(g.h) > buf.size()) {
             g.bits.clear();
@@ -136,7 +133,7 @@ void drawText(FrameBuffer& fb, int x, int y, const char* s, const Color& c) {
         const GlyphBitmap& g = glyph(ch);
         if (!g.bits.empty()) {
             const int rowBytes = ((g.w + 31) / 32) * 4;
-            const int top = y + gAscent - g.originY; // 行框顶 → 基线 → 字形顶
+            const int top = y + gAscent - g.originY; // 行框顶 → 字形顶
             for (int row = 0; row < g.h; ++row) {
                 const unsigned char* line = g.bits.data() + static_cast<std::size_t>(row) * rowBytes;
                 for (int col = 0; col < g.w; ++col) {

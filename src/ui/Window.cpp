@@ -1,5 +1,4 @@
-// Window.cpp
-// 实现窗口层：GLFW 建窗与 OpenGL 上下文、键盘/鼠标/尺寸事件回调转发——全项目唯一接触 GLFW 的文件。
+// Window.cpp — 窗口层：GLFW 建窗与 GL 上下文、事件回调转发（唯一接触 GLFW 的文件）。
 #include "ui/Window.hpp"
 #include <GLFW/glfw3.h>
 #include <iostream>
@@ -34,7 +33,7 @@ void Window::glfwCursorPos(GLFWwindow* window, double x, double y) {
     if (s_active == nullptr || !s_active->onMouseMove_) {
         return;
     }
-    // 光标回调不带 mods：用 glfwGetKey 查询当前修饰键状态（约束类交互拖拽中生效）
+    // 光标回调不带 mods：用 glfwGetKey 补查修饰键状态。
     int mods = 0;
     if (glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS ||
         glfwGetKey(window, GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS) {
@@ -44,7 +43,7 @@ void Window::glfwCursorPos(GLFWwindow* window, double x, double y) {
         glfwGetKey(window, GLFW_KEY_RIGHT_CONTROL) == GLFW_PRESS) {
         mods |= GLFW_MOD_CONTROL;
     }
-    // 鼠标坐标从窗口逻辑坐标换算到帧缓冲像素（适配高 DPI 缩放）
+    // 逻辑坐标 → 帧缓冲像素（高 DPI 缩放）。
     int fw = 0, fh = 0, ww = 0, wh = 0;
     glfwGetFramebufferSize(window, &fw, &fh);
     glfwGetWindowSize(window, &ww, &wh);
@@ -87,7 +86,7 @@ Window::Window(int width, int height, const char* title, bool hidden)
         return;
     }
     glfwMakeContextCurrent(window_);
-    glfwSwapInterval(1); // 与显示器刷新同步，避免空转把 CPU 打满
+    glfwSwapInterval(1); // 垂直同步
     glfwSetWindowSizeLimits(window_, 400, 300, GLFW_DONT_CARE, GLFW_DONT_CARE);
     glfwSetKeyCallback(window_, &Window::glfwKey);
     glfwSetMouseButtonCallback(window_, &Window::glfwMouseButton);

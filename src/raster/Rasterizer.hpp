@@ -1,5 +1,4 @@
-// Rasterizer.hpp
-// 实验一图元生成算法：Bresenham 直线、中点圆、角度筛选圆弧，统一支持线型（实/虚/点）与线宽属性。
+// Rasterizer.hpp — 图元生成：Bresenham 直线、中点圆、角度筛选圆弧。
 #pragma once
 #include "core/Color.hpp"
 #include "core/FrameBuffer.hpp"
@@ -13,7 +12,7 @@ struct LineStyle {
     int width = 1;
 };
 
-// 直线：Bresenham 算法，任意斜率（|m|>1 时切换驱动轴，方向由端点差决定，全整数运算）
+// 直线：Bresenham，任意斜率（|m|>1 切换驱动轴），全整数运算。
 void drawLine(FrameBuffer& fb, IPoint a, IPoint b, const Color& color,
               const LineStyle& style = {});
 
@@ -21,9 +20,8 @@ void drawLine(FrameBuffer& fb, IPoint a, IPoint b, const Color& color,
 void drawCircle(FrameBuffer& fb, IPoint center, int radius, const Color& color,
                 const LineStyle& style = {});
 
-// 圆弧：中点算法 + 逐点角度过滤。角度为屏幕坐标（0°=正右，y 向下故顺时针为正），
-// 画从 startDeg 顺时针到 endDeg 的弧；endDeg<=startDeg 视为补一圈。
-// 对应实验一挑战问题：指定起止角的圆弧段
+// 圆弧：中点算法 + 角度过滤。屏幕坐标 0°=正右、y 向下→顺时针为正；
+// 画 startDeg 顺时针到 endDeg 的弧，endDeg<=startDeg 时补一圈。
 void drawArc(FrameBuffer& fb, IPoint center, int radius, float startDeg, float endDeg,
              const Color& color, const LineStyle& style = {});
 

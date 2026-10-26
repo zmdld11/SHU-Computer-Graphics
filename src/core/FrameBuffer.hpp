@@ -1,5 +1,4 @@
-// FrameBuffer.hpp
-// 实现 CPU 像素画板：一块按行存储的内存像素数组，putPixel 是全项目唯一的画点入口，所有实验算法都画在它上面。
+// FrameBuffer.hpp — CPU 像素画板；putPixel 是全项目唯一的画点入口。
 #pragma once
 #include "core/Color.hpp"
 #include <cassert>
@@ -9,7 +8,7 @@
 
 namespace cg {
 
-// 软件光栅化的底座：CPU 端像素数组。所有手写算法最终都落到 putPixel。
+// 软件光栅化的底座：所有手写算法最终都落到 putPixel。
 class FrameBuffer {
 public:
     FrameBuffer(int width, int height);
@@ -17,7 +16,7 @@ public:
     // 窗口尺寸变化时重设画布（内容清空）
     void resize(int width, int height);
 
-    // 拷贝另一块画布的像素（尺寸不同则先重建）；用于"提交层 → 显示层"的每帧拷贝
+    // 拷贝另一块画布的内容（尺寸不同则先重建）。
     void copyFrom(const FrameBuffer& other);
 
     int width() const  { return width_; }
@@ -25,8 +24,7 @@ public:
 
     void clear(const Color& color = Color::Black());
 
-    // 唯一画点入口。行 0 在顶部；越界坐标直接忽略（光栅化算法允许过冲）。
-    // 放在头文件内联：扫描线/种子填充每个像素都会调用，Debug 下的函数调用开销很可观。
+    // 唯一画点入口；行 0 在顶部，越界忽略。内联：每像素都会调用。
     void putPixel(int x, int y, const Color& color) {
         assertSizeInvariant();
         if (x < 0 || x >= width_ || y < 0 || y >= height_) {
@@ -37,9 +35,7 @@ public:
         pixels_[i] = pack(color);
     }
 
-    // 半透明画点（src-over 混合）：dst = src*α + dst*(1-α)。
-    // 游戏的夜色叠加/影子/灯光光晕都走它；alpha=0 直接忽略，255 等价 putPixel。
-    // 注意混合要读回原像素，比 putPixel 多一次访存，只用于少量半透明层。
+    // 半透明画点（src-over）：dst = src*α + dst*(1-α)；255 等价 putPixel。
     void blendPixel(int x, int y, const Color& color, std::uint8_t alpha) {
         assertSizeInvariant();
         if (x < 0 || x >= width_ || y < 0 || y >= height_ || alpha == 0) {
@@ -76,25 +72,22 @@ public:
                      static_cast<std::uint8_t>((v >> 16) & 0xFFu)};
     }
 
-    // 填充闭区间矩形 [x0,x1]×[y0,y1]（自动夹到画布内）；裁剪掩码与任务栏底色用
+    // 填充闭区间矩形 [x0,x1]×[y0,y1]，自动夹边界。
     void fillRect(int x0, int y0, int x1, int y1, const Color& color);
 
-    // 填充第 y 行闭区间 [x0,x1]（自动夹边界）。扫描线填充/种子填充按 span 落色，
-    // 每次只需打包一次颜色，省掉逐像素的边界判断与 RGBA 打包。
+    // 填充第 y 行闭区间 [x0,x1]；扫描线/种子填充按 span 落色。
     void fillSpan(int y, int x0, int x1, const Color& color);
 
-    // 半透明版本：整行 src-over 混合。影子/夜色走扫描线时用它。
+    // 半透明整行（src-over）。
     void blendSpan(int y, int x0, int x1, const Color& color, std::uint8_t alpha);
 
-    // 半透明矩形：闭区间 [x0,x1]×[y0,y1]，自动夹边界。全屏夜色/转场淡入淡出用。
+    // 半透明矩形，自动夹边界。
     void blendRect(int x0, int y0, int x1, int y1, const Color& color, std::uint8_t alpha);
 
-    // 把 src 第 y 行的 [x0,x1] 整段拷贝到本画布同一行（闭区间，自动夹边界）。
-    // 裁剪常驻显示层用它替代逐像素 pixel()+putPixel()。
+    // 整行拷贝（闭区间，自动夹边界）。
     void copySpanFrom(const FrameBuffer& src, int y, int x0, int x1);
 
-    // 把 src 的任意矩形整块拷贝到本画布 (dstX,dstY)（不改尺寸，自动夹边界）。
-    // 游戏镜头滚动每帧只需按相机位置拷一块世界缓存，比逐像素重绘便宜。
+    // 任意矩形块拷贝，自动夹边界。
     void copyRectFrom(const FrameBuffer& src, int srcX, int srcY, int w, int h,
                       int dstX, int dstY);
 
@@ -104,14 +97,14 @@ public:
     }
 
 private:
-    // 打包成内存字节序 RGBA：Windows x64 为小端，r/g/b/a 依次落在低到高字节
+    // 打包成小端 RGBA：低字节到高字节为 r/g/b/a。
     static std::uint32_t pack(const Color& c) {
         return static_cast<std::uint32_t>(c.r) |
                (static_cast<std::uint32_t>(c.g) << 8) |
                (static_cast<std::uint32_t>(c.b) << 16) | (0xFFu << 24);
     }
 
-    // 尺寸与像素缓冲必须严格同步：一旦失配（如堆被破坏），下标守卫形同虚设
+    // 尺寸与缓冲必须同步，否则下标守卫失效。
     void assertSizeInvariant() const {
         assert(pixels_.size() == static_cast<std::size_t>(width_) *
                                      static_cast<std::size_t>(height_));

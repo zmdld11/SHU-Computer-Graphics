@@ -1,5 +1,4 @@
-// Transform.cpp
-// 实现实验三几何变换数学：3x3 齐次矩阵的平移/放缩/旋转（含绕任意参考点的组合）与点变换。
+// Transform.cpp — 3x3 齐次矩阵：平移/缩放/旋转（含绕任意点）与点变换。
 #include "geom/Transform.hpp"
 
 #include <cmath>
@@ -18,7 +17,7 @@ Mat3 scale(float sx, float sy) {
     return {{{sx, 0, 0}, {0, sy, 0}, {0, 0, 1}}};
 }
 
-// 屏幕坐标 y 向下：正角在屏幕上是顺时针，与 drawArc 的角度约定一致
+// 屏幕坐标 y 向下：正角为顺时针，与 drawArc 一致。
 Mat3 rotate(float thetaRad) {
     const float c = std::cos(thetaRad);
     const float s = std::sin(thetaRad);
@@ -26,7 +25,7 @@ Mat3 rotate(float thetaRad) {
 }
 
 Mat3 rotateAbout(float px, float py, float thetaRad) {
-    // T(p) · R · T(-p)：先把参考点挪到原点，旋转，再挪回去
+    // T(p) · R · T(-p)。
     return mul(translate(px, py), mul(rotate(thetaRad), translate(-px, -py)));
 }
 
@@ -34,7 +33,7 @@ Mat3 scaleAbout(float px, float py, float sx, float sy) {
     return mul(translate(px, py), mul(scale(sx, sy), translate(-px, -py)));
 }
 
-// 列向量约定：M = A·B 先作用 B 再作用 A
+// 列向量约定：A·B 先作用 B 再作用 A。
 Mat3 mul(const Mat3& a, const Mat3& b) {
     Mat3 r{};
     for (int i = 0; i < 3; ++i) {

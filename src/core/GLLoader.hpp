@@ -1,5 +1,4 @@
-// GLLoader.hpp
-// 实现自写 OpenGL 函数加载器：运行时按函数名向显卡驱动查询函数地址，替代第三方 glad，仓库保持零第三方源码。
+// GLLoader.hpp — 自写 OpenGL 函数加载器：运行时按名字向驱动查询地址，替代 glad。
 #pragma once
 #include <cstddef>
 
@@ -11,9 +10,7 @@ using LoaderFn = void* (*)(const char* name);
 } // namespace cg
 
 // ===================== OpenGL 加载器（自写，替代第三方 glad） =====================
-// 以下类型/常量/函数指针都放在全局的 gl 命名空间——官方 OpenGL 就是全局 C API，
-// 这样调用处的写法与使用官方头文件完全一致。
-// 数值与签名抄自 OpenGL 官方规范（曾与生成器产物逐一核对）。
+// 类型/常量/函数指针放在全局 gl 命名空间，调用写法与官方头文件一致。
 namespace gl {
 
 // ---- 基础类型  ----
@@ -51,8 +48,7 @@ constexpr GLenum GL_CLAMP_TO_EDGE = 0x812F;
 constexpr GLenum GL_TEXTURE0 = 0x84C0;
 
 // ---- 函数指针 ----
-// Windows 上 OpenGL 1.1 之后的函数编译时链接不到，只能运行时按名字向驱动要地址，
-// 存进下面的指针再调用。名字与官方 OpenGL 完全一致，调用处写法不变。
+// OpenGL 1.1 之后的函数只能运行时取地址，存进下面的指针再调用。
 extern void (*glActiveTexture)(GLenum texture);
 extern void (*glAttachShader)(GLuint program, GLuint shader);
 extern void (*glBindBuffer)(GLenum target, GLuint buffer);
@@ -96,8 +92,7 @@ extern void (*glVertexAttribPointer)(GLuint index, GLint size, GLenum type,
                                      const void* pointer);
 extern void (*glViewport)(GLint x, GLint y, GLsizei width, GLsizei height);
 
-// 把上面 33 个函数的地址逐个从驱动查出来。
-// 任何一个查不到都返回 false（说明这台机器不支持 OpenGL 3.3，程序会提示并退出）。
+// 逐个加载上面的函数地址；任一失败返回 false（不支持 3.3）。
 bool loadGL(cg::LoaderFn getProcAddress);
 
 } // namespace gl

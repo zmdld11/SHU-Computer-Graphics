@@ -1,12 +1,8 @@
-// Transform.hpp
-// 实验三初稿接口：3x3 齐次坐标矩阵的平移/缩放/旋转（含绕任意点），实现时另建 issue。
+// Transform.hpp — 3x3 齐次坐标矩阵；列向量约定 v' = M·v。
 #pragma once
 #include "core/Point.hpp"
 
 namespace cg::geom {
-
-// 实验三实现（届时另建 issue）。约定：3x3 齐次坐标，列向量，v' = M * v。
-// 接口为初稿，实验实现时可调整，调整理由写进 issue。
 
 struct Mat3 {
     float m[3][3];

@@ -1,5 +1,4 @@
-// SmokeChecks.cpp
-// 实现算法自测与演示图导出：断言按"实验"分节，每节先 fb.clear()，再对具体像素/返回值断言。
+// SmokeChecks.cpp — 算法自测与演示图导出；按实验分节，每节先 clear() 再断言。
 #include "tests/SmokeChecks.hpp"
 
 #include "core/Color.hpp"
@@ -316,7 +315,7 @@ int runAlgorithmSelfChecks() {
         expect(canvas.pixel(400, 300) == Color::Green(), "ui: 属性切换后已提交内容不变");
     }
 
-    // ================= extension：F 键切换已闭合多边形的填充/轮廓 =================
+    // ================= F 键切换已闭合多边形的填充/轮廓 =================
     {
         PaintController ctrl;
         FrameBuffer canvas(kWidth, kHeight);
@@ -679,7 +678,7 @@ int runAlgorithmSelfChecks() {
         expect(ctrl.title().find("选中:0") != std::string::npos, "sel: 删除后清空选中");
     }
 
-    // ================= 变换拖拽覆盖：多边形边缘 / 圆内部 / 多选组合体（#56） =================
+    // ================= 变换拖拽覆盖：多边形边缘 / 圆内部 / 多选组合体 =================
     {
         PaintController ctrl;
         FrameBuffer canvas(kWidth, kHeight);
@@ -845,7 +844,7 @@ int runAlgorithmSelfChecks() {
         expect(canvas.pixel(145, 300) == Color::Black(), "mod: 原水平位置已空");
     }
 
-    // ================= extension：常驻裁剪（窗口独立于模式，持续生效可开关） =================
+    // ================= 常驻裁剪（窗口独立于模式，持续生效可开关） =================
     {
         PaintController ctrl;
         FrameBuffer canvas(kWidth, kHeight);
@@ -1292,7 +1291,7 @@ int runAlgorithmSelfChecks() {
                "fb: copyRectFrom 子矩形与边界");
     }
 
-    // ================= 常驻裁剪显示层缓存（#55） =================
+    // ================= 常驻裁剪显示层缓存 =================
     {
         PaintController ctrl;
         FrameBuffer canvas(kWidth, kHeight);
@@ -1332,7 +1331,7 @@ int runAlgorithmSelfChecks() {
         expect(small.pixel(400, 300) == Color::Black(), "clip-cache: resize 后窗口外隐藏");
     }
 
-    // ================= 凸多边形裁剪窗缓存（#55） =================
+    // ================= 凸多边形裁剪窗缓存 =================
     {
         PaintController ctrl;
         FrameBuffer canvas(kWidth, kHeight);
@@ -1358,7 +1357,7 @@ int runAlgorithmSelfChecks() {
         expect(canvas.pixel(200, 300) == Color::Black(), "clip-cache: 凸多边形窗外隐藏");
     }
 
-    // ================= 种子填充绑定：圆/多边形缩放不内外翻转（#57） =================
+    // ================= 种子填充绑定：圆/多边形缩放不内外翻转 =================
     {
         PaintController ctrl;
         FrameBuffer canvas(kWidth, kHeight);

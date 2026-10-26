@@ -1,5 +1,4 @@
-// Bezier.cpp
-// 实现实验四（必做）的 de Casteljau 递推与均匀采样。
+// Bezier.cpp — de Casteljau 递推与均匀采样。
 #include "curves/Bezier.hpp"
 
 #include <algorithm>
@@ -10,7 +9,7 @@ FPoint deCasteljauAt(const std::vector<FPoint>& controlPoints, float t) {
     if (controlPoints.empty()) {
         return {0.0f, 0.0f};
     }
-    // 工作副本逐层割角：第 r 层后 p[i] 是 B 上参数 t 处子折线的第 i 个顶点
+    // 逐层割角：第 r 层后 p[i] 是子折线的第 i 个顶点。
     std::vector<FPoint> p = controlPoints;
     const int n = static_cast<int>(p.size()) - 1;
     for (int r = 1; r <= n; ++r) {
@@ -31,7 +30,7 @@ std::vector<FPoint> sampleBezier(const std::vector<FPoint>& controlPoints, int s
         segments = 1;
     }
     samples.reserve(static_cast<std::size_t>(segments) + 1);
-    // 复用同一块工作缓冲：每个 t 只覆盖数值，不再逐点复制/分配控制点 vector
+    // 复用工作缓冲，避免每个 t 重新分配。
     std::vector<FPoint> work(controlPoints.size());
     const int n = static_cast<int>(work.size()) - 1;
     for (int k = 0; k <= segments; ++k) {

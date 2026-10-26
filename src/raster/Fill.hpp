@@ -1,5 +1,4 @@
-// Fill.hpp
-// 实验二填充算法：扫描线多边形填充（新边表 NET + 活性边表 AET）与扫描线种子填充。
+// Fill.hpp — 扫描线多边形填充（NET + AET）与扫描线种子填充。
 #pragma once
 #include "core/Color.hpp"
 #include "core/FrameBuffer.hpp"
@@ -9,20 +8,14 @@
 
 namespace cg::raster {
 
-// 实验二（必做 1）：扫描线算法填充任意多边形。
-// 数据结构用教材的"新边表 NET + 活性边表 AET"：
-//   - NET 按边的下端点 y 分桶挂边（起始扫描线即该桶下标）
-//   - AET 随扫描线推进：加入新边、删除失效边、按 x 排序、两两配对填充
-// 顶点交点计数规则：非水平边按半开区间 [ymin, ymax) 参与求交（上端缩 1 像素），
-// 使"扫描线正过顶点"时的交点个数自动正确（局部极值点算 2 个，非极值点算 1 个）。
-// alpha < 255 时按行 src-over 半透明落色（游戏影子用），默认 255 保持不透明。
+// 扫描线多边形填充：NET 按下端点 y 分桶，AET 随扫描线加入/删除/排序/两两配对。
+// 非水平边按半开区间 [ymin, ymax) 求交，扫描线过顶点时交点个数自动正确。
+// alpha < 255 时按行 src-over 半透明落色。
 void scanlineFillPolygon(FrameBuffer& fb, const std::vector<IPoint>& polygon,
                          const Color& color, std::uint8_t alpha = 255);
 
-// 实验二（必做 2）：连通区域填充的扫描线种子填充算法。
-// 从 seed 出发，填充与之同色的连通区域（遇到不同颜色即边界，视为不可填）。
-// 与逐像素入栈的简单种子填充相比：每次把一整段（像素段）填掉、只在上下相邻行
-// 的新段上取代表像素入栈，栈空间大幅减少。
+// 扫描线种子填充：从 seed 填同色连通区域；每次填一整段，只在上下相邻行
+// 的新段取代表像素入栈，栈空间远小于逐像素版本。
 void scanlineSeedFill(FrameBuffer& fb, IPoint seed, const Color& fillColor);
 
 } // namespace cg::raster

@@ -1,5 +1,4 @@
-// Rasterizer.cpp
-// 实验一图元生成算法：Bresenham 直线、中点圆、角度筛选圆弧，统一支持线型（实/虚/点）与线宽属性。
+// Rasterizer.cpp — 图元生成：Bresenham 直线、中点圆、角度筛选圆弧；统一支持线型与线宽。
 #include "raster/Rasterizer.hpp"
 #include <algorithm>
 #include <cmath>
@@ -10,10 +9,9 @@ namespace {
 
 constexpr float kPi = 3.14159265358979f;
 
-// 掩码过滤 + 方形刷子落点：实验一"线型、线宽属性"的统一出口
+// 线型/线宽的统一落点：掩码过滤 + 方形刷子。
 void plotPen(FrameBuffer& fb, int x, int y, const Color& c, const LineStyle& s, unsigned step) {
-    // 线宽>1 时掩码下标按线宽放大（每个掩码位对应 width 个路径像素），
-    // 否则方形刷子两侧外扩 w/2 会把虚线/点线的空档填满（#17）
+    // 线宽>1 时掩码下标按线宽放大，否则刷子会填满虚线空档。
     const unsigned idx =
         (s.width > 1 ? step / static_cast<unsigned>(s.width) : step) & 15u;
     if (((s.mask >> idx) & 1u) == 0u) {
@@ -48,9 +46,8 @@ struct CirclePixel {
     IPoint p;
 };
 
-// 整圆离散点集：中点算法走 1/8 弧 + 八分对称展开。
-// ordered=true 时按角度升序排序去重——掩码计数沿圆周连续递增，虚线/点线才均匀（#13）；
-// 实线（默认）不需要角度和排序，跳过 atan2/sort 的整圆开销。
+// 整圆离散点：中点算法 1/8 弧 + 八分对称展开；ordered=true 时按角度排序去重，
+// 掩码沿圆周连续递增，虚线/点线才均匀。
 std::vector<CirclePixel> circlePoints(IPoint center, int radius, bool ordered) {
     std::vector<CirclePixel> pts;
     pts.reserve(static_cast<std::size_t>(radius) * 8);
@@ -80,7 +77,7 @@ std::vector<CirclePixel> circlePoints(IPoint center, int radius, bool ordered) {
     }
     std::sort(pts.begin(), pts.end(),
               [](const CirclePixel& a, const CirclePixel& b) { return a.angle < b.angle; });
-    // 45° 等对称轴上同一像素会从两个八分段各来一次，排序后相邻，去重
+    // 对称轴上的重复像素排序后相邻，去重。
     pts.erase(std::unique(pts.begin(), pts.end(),
                           [](const CirclePixel& a, const CirclePixel& b) {
                               return a.p.x == b.p.x && a.p.y == b.p.y;
@@ -92,7 +89,7 @@ std::vector<CirclePixel> circlePoints(IPoint center, int radius, bool ordered) {
 } // namespace
 
 void drawLine(FrameBuffer& fb, IPoint a, IPoint b, const Color& color, const LineStyle& style) {
-    // 快速剔除：线段包围盒完全在画布外时直接返回，避免拖到远处后仍逐点循环
+    // 包围盒完全在画布外时直接返回。
     if (std::max(a.x, b.x) < 0 || std::min(a.x, b.x) >= fb.width() ||
         std::max(a.y, b.y) < 0 || std::min(a.y, b.y) >= fb.height()) {
         return;
@@ -164,7 +161,7 @@ void drawArc(FrameBuffer& fb, IPoint center, int radius, float startDeg, float e
     if (e < 0.0f) e += 360.0f;
     if (e <= s) e += 360.0f;
 
-    unsigned step = 0; // 只对画出的像素递增，虚线沿弧线连续
+    unsigned step = 0; // 只对画出的像素递增，虚线沿弧连续
     for (const auto& cp : circlePoints(center, radius, true)) {
         if (inArcRange(cp.angle, s, e)) {
             plotPen(fb, cp.p.x, cp.p.y, color, style, step++);

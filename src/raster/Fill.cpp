@@ -1,5 +1,4 @@
-// Fill.cpp
-// 实验二填充算法：扫描线多边形填充（新边表 NET + 活性边表 AET）与扫描线种子填充。
+// Fill.cpp — 扫描线多边形填充（NET + AET）与扫描线种子填充。
 #include "raster/Fill.hpp"
 #include <algorithm>
 #include <cmath>
@@ -23,7 +22,7 @@ void scanlineFillPolygon(FrameBuffer& fb, const std::vector<IPoint>& polygon,
         return;
     }
 
-    // 多边形 y 范围 ∩ 画布 y 范围
+    // 多边形 y 范围与画布求交。
     int yLow = polygon[0].y;
     int yHigh = polygon[0].y;
     for (const auto& p : polygon) {
@@ -36,19 +35,19 @@ void scanlineFillPolygon(FrameBuffer& fb, const std::vector<IPoint>& polygon,
         return;
     }
 
-    // ---- 建新边表 NET：下标为扫描线 y，每个桶存"从这一行开始参与"的边 ----
+    // NET：下标为扫描线 y，桶里存从该行开始参与的边。
     std::vector<std::vector<ActiveEdge>> net(static_cast<std::size_t>(scanEnd) + 1);
     auto addEdge = [&](IPoint p1, IPoint p2) {
         if (p1.y == p2.y) {
-            return; // 水平边不参与求交（其像素由轮廓绘制负责）
+            return; // 水平边不参与求交
         }
         if (p1.y > p2.y) {
-            std::swap(p1, p2); // p1 始终为下端点
+            std::swap(p1, p2);
         }
-        const int top = p2.y - 1; // 半开区间 [p1.y, p2.y)：上端缩 1 像素
+        const int top = p2.y - 1; // 半开区间 [p1.y, p2.y)：上端缩 1 像素，顶点不重复计数
         const int begin = std::max(p1.y, scanBegin);
         if (begin > top || begin > scanEnd) {
-            return; // 该边与画布扫描范围无交集
+            return;
         }
         const double dxdy =
             static_cast<double>(p2.x - p1.x) / static_cast<double>(p2.y - p1.y);
@@ -59,20 +58,20 @@ void scanlineFillPolygon(FrameBuffer& fb, const std::vector<IPoint>& polygon,
         addEdge(polygon[i], polygon[(i + 1) % n]);
     }
 
-    // ---- 逐条扫描线：维护 AET → 排序 → 配对填充 ----
+    // 逐条扫描线：维护 AET → 排序 → 配对填充。
     std::vector<ActiveEdge> aet;
     for (int y = scanBegin; y <= scanEnd; ++y) {
         for (const auto& e : net[static_cast<std::size_t>(y)]) {
             aet.push_back(e);
         }
-        // 扫描线已越过该边上端点（半开区间顶端）→ 移出 AET
+        // 越过该边半开区间顶端 → 移出 AET。
         aet.erase(std::remove_if(aet.begin(), aet.end(),
                                  [y](const ActiveEdge& e) { return y > e.yTop; }),
                   aet.end());
         std::sort(aet.begin(), aet.end(),
                   [](const ActiveEdge& a, const ActiveEdge& b) { return a.x < b.x; });
 
-        // 两两配对：[x0, x1] 为多边形内部区间（奇数个交点时忽略最后一个）
+        // 两两配对得到内部区间（奇数个交点时忽略最后一个）。
         for (std::size_t i = 0; i + 1 < aet.size(); i += 2) {
             const int xStart = std::max(0, static_cast<int>(std::ceil(aet[i].x)));
             const int xEnd =
@@ -94,9 +93,9 @@ void scanlineSeedFill(FrameBuffer& fb, IPoint seed, const Color& fillColor) {
     if (seed.x < 0 || seed.x >= fb.width() || seed.y < 0 || seed.y >= fb.height()) {
         return;
     }
-    const Color target = fb.pixel(seed.x, seed.y); // 待填充区域的颜色
+    const Color target = fb.pixel(seed.x, seed.y); // 目标色
     if (target == fillColor) {
-        return; // 已经是填充色，直接返回（避免无意义的重填与死循环）
+        return;
     }
 
     std::vector<IPoint> stack;
@@ -106,10 +105,10 @@ void scanlineSeedFill(FrameBuffer& fb, IPoint seed, const Color& fillColor) {
         const IPoint p = stack.back();
         stack.pop_back();
         if (fb.pixel(p.x, p.y) != target) {
-            continue; // 已被填过或不是目标色
+            continue;
         }
 
-        // 1) 向左右扩展，求出当前行上这一整段 [xl, xr] 并填充
+        // 1) 向左右扩展求整段 [xl, xr] 并填充。
         int xl = p.x;
         while (xl - 1 >= 0 && fb.pixel(xl - 1, p.y) == target) {
             --xl;
@@ -120,7 +119,7 @@ void scanlineSeedFill(FrameBuffer& fb, IPoint seed, const Color& fillColor) {
         }
         fb.fillSpan(p.y, xl, xr, fillColor);
 
-        // 2) 在上下相邻两行的同一区间内找"新的同色像素段"，每段取代表像素入栈
+        // 2) 上下相邻行找新的同色段，每段取最左代表像素入栈。
         for (int dy = -1; dy <= 1; dy += 2) {
             const int y = p.y + dy;
             if (y < 0 || y >= fb.height()) {
@@ -130,7 +129,7 @@ void scanlineSeedFill(FrameBuffer& fb, IPoint seed, const Color& fillColor) {
             for (int x = xl; x <= xr; ++x) {
                 const bool fillable = (fb.pixel(x, y) == target);
                 if (fillable && !inSpan) {
-                    stack.push_back({x, y}); // 新段的代表像素（取最左）
+                    stack.push_back({x, y}); // 新段代表像素（最左）
                     inSpan = true;
                 } else if (!fillable) {
                     inSpan = false;

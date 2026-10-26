@@ -1,6 +1,4 @@
-// main.cpp
-// 实现程序入口：解析 --smoke / --demo 启动参数，组装窗口、画板、上屏与交互控制器并运行主循环。
-// 具体算法在 src/raster、src/geom、src/curves；自测与演示图在 src/tests。
+// main.cpp — 入口：参数分发、窗口/画布/控制器组装与主循环。
 #include "core/Canvas.hpp"
 #include "core/FrameBuffer.hpp"
 #include "game/FarmGame.hpp"
@@ -43,8 +41,7 @@ int main(int argc, char** argv) {
         return 0;
     }
 
-    // --demo-ui：不开窗口，模拟一段操作把"任务栏 + 图形 + 常驻裁剪 + 选中"渲染成图片
-    //（UI 自查/报告截图；任务栏文字用系统字体，画在画布里所以截得下来）
+    // --demo-ui：模拟一段操作，输出任务栏 + 图形 + 裁剪 + 选中的截图。
     if (arg == "--demo-ui") {
         cg::FrameBuffer fb(kWidth, kHeight);
         cg::PaintController ctrl;
@@ -93,8 +90,7 @@ int main(int argc, char** argv) {
         return 0;
     }
 
-    // --stress-ui：不开窗口的交互压力脚本——出界画图/超界拖拽/极小窗口等极限操作，
-    // 最后渲染一帧验证"不崩溃"（越界防护回归场景）
+    // --stress-ui：越界画图/超界拖拽等极限操作，验证不崩溃。
     if (arg == "--stress-ui") {
         cg::FrameBuffer fb(kWidth, kHeight);
         cg::PaintController ctrl;
@@ -174,7 +170,7 @@ int main(int argc, char** argv) {
         return 0;
     }
 
-    // --bench-ui：不开窗口，测裁剪常态化的显示层合成与拖拽帧成本（性能证据/回归对比）
+    // --bench-ui：测常驻裁剪合成与拖拽的帧成本。
     if (arg == "--bench-ui") {
         cg::FrameBuffer fb(kWidth, kHeight);
         cg::PaintController ctrl;
@@ -287,7 +283,7 @@ int main(int argc, char** argv) {
 
     cg::PaintController ctrl;
 
-    // 画板跟随窗口尺寸：用 unique_ptr 以便 resize 时重建
+    // 画板跟随窗口尺寸，resize 时重建。
     auto fbLive = std::make_unique<cg::FrameBuffer>(window.fbWidth(), window.fbHeight());
     auto canvasLive =
         std::make_unique<cg::Canvas>(fbLive->width(), fbLive->height(), window.loader());
@@ -311,19 +307,15 @@ int main(int argc, char** argv) {
 
     std::string lastTitle;
     while (!window.shouldClose()) {
-        // 1. 画出这一帧所有的像素
         ctrl.render(live);
-        // 2. 标题栏显示当前模式提示（title() 返回缓存引用；只在内容变化时改窗口标题）
+        // 标题只在内容变化时更新。
         const std::string& t = ctrl.title();
         if (t != lastTitle) {
             window.setTitle(t);
             lastTitle = t;
         }
-        // 3. 像素阵列 → GPU → 窗口
         liveCanvas.present(live);
-        // 4. 显示画面（双缓冲）
         window.swapBuffers();
-        // 5. 接收新的鼠标和键盘事件
         window.pollEvents();
     }
     return 0;

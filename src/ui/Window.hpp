@@ -1,5 +1,4 @@
-// Window.hpp
-// 实现窗口层：GLFW 建窗与 OpenGL 上下文、键盘/鼠标/尺寸事件回调转发——全项目唯一接触 GLFW 的文件。
+// Window.hpp — 窗口层：GLFW 建窗、GL 上下文与事件回调转发。
 #pragma once
 #include "core/GLLoader.hpp"
 #include <functional>
@@ -9,8 +8,7 @@ struct GLFWwindow;
 
 namespace cg {
 
-// GLFW 窗口封装：建窗口、建 GL 上下文、事件回调转发。算法层对它无感知。
-// 单窗口应用：回调经静态实例路由。
+// GLFW 窗口封装；单窗口应用，回调经静态实例路由。
 class Window {
 public:
     // mods = GLFW 修饰键位集（Shift/Ctrl 等约束类交互用）
@@ -32,14 +30,14 @@ public:
     void pollEvents();
     void setTitle(const std::string& title);
 
-    // GL 过程地址加载器，交给 Canvas 初始化 glad 用
+    // GL 过程地址加载器，交给 Canvas。
     LoaderFn loader() const;
 
     // 帧缓冲像素尺寸（高 DPI 缩放下与窗口逻辑尺寸不同）
     int fbWidth() const;
     int fbHeight() const;
 
-    // 最小逻辑窗口尺寸（游戏启动时设 800×600，避免 HUD 被压扁；编辑器不调用）
+    // 最小逻辑窗口尺寸。
     void setMinSize(int width, int height);
 
     int width() const  { return width_; }

@@ -1,5 +1,4 @@
-// FrameBuffer.cpp
-// 实现 CPU 像素画板：一块按行存储的内存像素数组，putPixel 是全项目唯一的画点入口，所有实验算法都画在它上面。
+// FrameBuffer.cpp — CPU 像素画板实现。
 #include "core/FrameBuffer.hpp"
 
 #include <algorithm>
@@ -20,7 +19,6 @@ FrameBuffer::FrameBuffer(int width, int height)
                   static_cast<std::size_t>(height > 0 ? height : 0),
               0) {}
 
-// 画布大小改变时重新设定
 void FrameBuffer::resize(int width, int height) {
     width_ = width;
     height_ = height;
@@ -29,7 +27,7 @@ void FrameBuffer::resize(int width, int height) {
                    0);
 }
 
-// 复制整块画板：同尺寸时一条 memcpy；尺寸变化才重新分配
+// 同尺寸走 memcpy，尺寸变化才重新分配。
 void FrameBuffer::copyFrom(const FrameBuffer& other) {
     if (width_ == other.width_ && height_ == other.height_) {
         if (!pixels_.empty()) {
@@ -43,7 +41,6 @@ void FrameBuffer::copyFrom(const FrameBuffer& other) {
     pixels_ = other.pixels_;
 }
 
-// 画布颜色填充：按 32 位像素整块填充，比逐字节循环快得多
 void FrameBuffer::clear(const Color& color) {
     const std::uint32_t v = pack(color);
     std::fill(pixels_.begin(), pixels_.end(), v);
@@ -124,7 +121,7 @@ void FrameBuffer::copyRectFrom(const FrameBuffer& src, int srcX, int srcY, int w
     if (w <= 0 || h <= 0) {
         return;
     }
-    // 先把目标矩形夹到本画布，再把对应的源列夹到源画布；行方向逐行夹。
+    // 目标矩形与源列分别夹到各自画布内。
     const int dx0 = std::max(0, dstX);
     const int dx1 = std::min(width_, dstX + w);
     const int dy0 = std::max(0, dstY);

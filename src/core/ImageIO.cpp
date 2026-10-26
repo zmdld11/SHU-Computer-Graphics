@@ -1,5 +1,4 @@
-// ImageIO.cpp
-// 实现 PPM(P6) 导出：P6 头 + RGB 字节流，Windows 照片打不开，但可用任何转换工具转 PNG。
+// ImageIO.cpp — PPM(P6) 导出：P6 头 + RGB 字节流。
 #include "core/ImageIO.hpp"
 
 #include <fstream>

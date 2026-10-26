@@ -1,18 +1,15 @@
-// Canvas.cpp
-// 实现上屏画布：把 FrameBuffer 的像素上传成 OpenGL 纹理并贴满窗口——全项目唯一接触 OpenGL 绘制的文件。
+// Canvas.cpp — 把 FrameBuffer 上屏：像素上传成 OpenGL 纹理，贴满窗口。
 #include "core/Canvas.hpp"
 #include "core/FrameBuffer.hpp"
 #include <iostream>
 
-// GL 类型/常量/函数指针都在 gl 命名空间（见 GLLoader.hpp）
+// GL 函数指针都在 gl 命名空间（GLLoader.hpp）。
 using namespace gl;
 
 namespace cg {
 namespace {
 
-// ---------------- 两个"着色器"：跑在 GPU 里的小程序 ----------------
-// 顶点着色器：决定"画在哪"。我们只画一个铺满整个窗口的矩形，
-// 所以直接把矩形角点的坐标交给 GPU，不做别的计算。
+// 顶点着色器：把矩形角点坐标直接输出到裁剪空间。
 constexpr const char* kVertexShaderSource = R"glsl(#version 330 core
 layout(location = 0) in vec2 aPos;   // 矩形角点的屏幕坐标（-1..1）
 layout(location = 1) in vec2 aUV;    // 这个角点对应贴图上的位置（0..1）
@@ -23,27 +20,26 @@ void main() {
 }
 )glsl";
 
-// 片段着色器：决定"每个像素涂什么色"。它从贴图（也就是我们的 FrameBuffer）里取色。
-// 注意 v 要取反：我们数组第 0 行在画面顶部，OpenGL 贴图第 0 行在底部，方向相反。
+// 片段着色器：从贴图取色；v 取反（数组第 0 行在顶部，贴图第 0 行在底部）。
 constexpr const char* kFragmentShaderSource = R"glsl(#version 330 core
 in vec2 vUV;
 out vec4 fragColor;
-uniform sampler2D uTex;   // 贴图 = 我们已经画好像素的 FrameBuffer
+uniform sampler2D uTex;   // 贴图 = FrameBuffer
 void main() {
     fragColor = texture(uTex, vec2(vUV.x, 1.0 - vUV.y));
 }
 )glsl";
 
-// 编译一个着色器小程序；失败时打印显卡驱动给出的原因，返回 0 表示失败
+// 编译着色器，失败时打印驱动日志并返回 0。
 unsigned compileShader(unsigned shaderType, const char* source) {
-    const unsigned shaderId = glCreateShader(shaderType); // 向驱动申请一个"着色器"空壳
-    glShaderSource(shaderId, 1, &source, nullptr);        // 把上面的源码文本装进去
-    glCompileShader(shaderId);                            // 编译
+    const unsigned shaderId = glCreateShader(shaderType);
+    glShaderSource(shaderId, 1, &source, nullptr);
+    glCompileShader(shaderId);
     int ok = 0;
-    glGetShaderiv(shaderId, GL_COMPILE_STATUS, &ok);      // 查询编译是否成功
+    glGetShaderiv(shaderId, GL_COMPILE_STATUS, &ok);
     if (ok == 0) {
         char log[512];
-        glGetShaderInfoLog(shaderId, sizeof(log), nullptr, log); // 取错误详情
+        glGetShaderInfoLog(shaderId, sizeof(log), nullptr, log);
         std::cerr << "[Canvas] shader compile failed: " << log << std::endl;
         return 0;
     }
@@ -53,38 +49,36 @@ unsigned compileShader(unsigned shaderType, const char* source) {
 } // namespace
 
 Canvas::Canvas(int width, int height, LoaderFn loader) {
-    // GL 函数地址加载：把本工程用到的 33 个 GL 函数地址从驱动查出来。
-    // 不做这一步，下面所有 gl 开头的函数都调不动（机制见 GLLoader.hpp）
+    // 从驱动加载本工程用到的 GL 函数地址。
     if (loader == nullptr || !gl::loadGL(loader)) {
         std::cerr << "[Canvas] GL load failed（是否不支持 OpenGL 3.3？）" << std::endl;
         return;
     }
 
-    // ① 编译两个着色器，链接成一个"程序"（一条完整的画图流水线）
+    // 编译两个着色器并链接成程序。
     const unsigned vertexShader = compileShader(GL_VERTEX_SHADER, kVertexShaderSource);
     const unsigned fragmentShader = compileShader(GL_FRAGMENT_SHADER, kFragmentShaderSource);
     if (vertexShader == 0 || fragmentShader == 0) {
         return;
     }
 
-    program_ = glCreateProgram();             // 创建一个空程序
-    glAttachShader(program_, vertexShader);   // 把两个着色器挂进去
+    program_ = glCreateProgram();
+    glAttachShader(program_, vertexShader);
     glAttachShader(program_, fragmentShader);
-    glLinkProgram(program_);                  // 链接成可执行整体
-    glDeleteShader(vertexShader);             // 链接完成后源码对象没用了，释放
+    glLinkProgram(program_);
+    glDeleteShader(vertexShader);
     glDeleteShader(fragmentShader);
     int ok = 0;
-    glGetProgramiv(program_, GL_LINK_STATUS, &ok); // 查询链接是否成功
+    glGetProgramiv(program_, GL_LINK_STATUS, &ok);
     if (ok == 0) {
         char log[512];
         glGetProgramInfoLog(program_, sizeof(log), nullptr, log);
         std::cerr << "[Canvas] program link failed: " << log << std::endl;
         return;
     }
-    texUniform_ = glGetUniformLocation(program_, "uTex"); // 每帧不再做字符串查找
+    texUniform_ = glGetUniformLocation(program_, "uTex");
 
-    // ② 准备"铺满窗口的大矩形"的顶点数据：两个三角形拼成一个矩形。
-    // 每行 4 个数 = (x, y, u, v)：x/y 是屏幕位置（-1..1），u/v 是贴图上的取色位置（0..1）
+    // 铺满窗口的矩形：两个三角形，每顶点 (x, y, u, v)。
     const float rectangleVertices[] = {
         -1.0f, -1.0f, 0.0f, 0.0f,
          1.0f, -1.0f, 1.0f, 0.0f,
@@ -94,39 +88,37 @@ Canvas::Canvas(int width, int height, LoaderFn loader) {
         -1.0f,  1.0f, 0.0f, 1.0f,
     };
     unsigned vertexBuffer = 0;
-    glGenVertexArrays(1, &vao_);          // VAO：一个"备忘盒"，记住顶点数据长什么样
-    glGenBuffers(1, &vertexBuffer);      // VBO：真正存放顶点数字的显存块
-    glBindVertexArray(vao_);             // 打开备忘盒，接下来的配置都记在里面
+    glGenVertexArrays(1, &vao_);
+    glGenBuffers(1, &vertexBuffer);
+    glBindVertexArray(vao_);
     glBindBuffer(GL_ARRAY_BUFFER, vertexBuffer);
     glBufferData(GL_ARRAY_BUFFER, sizeof(rectangleVertices), rectangleVertices,
-                 GL_STATIC_DRAW);        // 把矩形数据从内存搬进显存（只搬这一次）
-    // 告诉 GPU 第 0 号属性（位置）：每 2 个 float 一组，从每行开头读
+                 GL_STATIC_DRAW);
     glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), nullptr);
     glEnableVertexAttribArray(0);
-    // 第 1 号属性（贴图坐标）：跳过开头 2 个 float，再读 2 个
     glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float),
                           reinterpret_cast<void*>(2 * sizeof(float)));
     glEnableVertexAttribArray(1);
 
-    // ③ 创建贴图（纹理）：GPU 显存里的一张"图片"，尺寸与画板一致
+    // 贴图：尺寸与画板一致。
     glGenTextures(1, &texture_);
     glBindTexture(GL_TEXTURE_2D, texture_);
-    // 放大/缩小时取最近的那个像素：保持锐利的像素风，不糊
+    // 最近邻采样：保持像素锐利。
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-    // 取色位置超出贴图边界时，夹在边缘不重复
+    // 超出边界按边缘夹取。
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE,
-                 nullptr);                // 先按尺寸占好位，内容每帧再填
+                 nullptr);
 
     valid_ = true;
 }
 
 Canvas::~Canvas() {
-    if (program_ != 0) glDeleteProgram(program_);      // 释放显存里的画图程序
-    if (texture_ != 0) glDeleteTextures(1, &texture_); // 释放贴图
-    if (vao_ != 0) glDeleteVertexArrays(1, &vao_);     // 释放顶点备忘盒
+    if (program_ != 0) glDeleteProgram(program_);
+    if (texture_ != 0) glDeleteTextures(1, &texture_);
+    if (vao_ != 0) glDeleteVertexArrays(1, &vao_);
 }
 
 void Canvas::resize(int width, int height) {
@@ -135,7 +127,7 @@ void Canvas::resize(int width, int height) {
     }
     glBindTexture(GL_TEXTURE_2D, texture_);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE,
-                 nullptr);                // 按新窗口尺寸重建贴图存储
+                 nullptr);
 }
 
 void Canvas::present(const FrameBuffer& fb) {
@@ -143,24 +135,22 @@ void Canvas::present(const FrameBuffer& fb) {
         return;
     }
 
-    // ⓪ 把我们画好的像素数组从内存上传进贴图——这是 CPU→GPU 的唯一数据通道
+    // 上传像素到贴图（CPU→GPU 唯一通道）。
     glBindTexture(GL_TEXTURE_2D, texture_);
     glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, fb.width(), fb.height(), GL_RGBA,
                     GL_UNSIGNED_BYTE, fb.data());
 
-    // ① 让 GPU 画那个大矩形
-    glViewport(0, 0, fb.width(), fb.height()); // 输出区域 = 整个窗口
-    glClear(GL_COLOR_BUFFER_BIT);              // 擦掉上一帧
-    glUseProgram(program_);                    // 启用我们的画图流水线
-    glActiveTexture(GL_TEXTURE0);              // 选定 0 号贴图槽（贴图在上面上传时已绑定）
+    // 让 GPU 画那个大矩形。
+    glViewport(0, 0, fb.width(), fb.height());
+    glClear(GL_COLOR_BUFFER_BIT);
+    glUseProgram(program_);
+    glActiveTexture(GL_TEXTURE0);
     if (texUniform_ >= 0) {
-        glUniform1i(texUniform_, 0); // 告诉流水线：着色器里的 uTex 就用 0 号槽
+        glUniform1i(texUniform_, 0);
     }
-    glBindVertexArray(vao_);                   // 使用 ② 里配好的矩形顶点
-    //?//
-    glDrawArrays(GL_TRIANGLES, 0, 6);          // 画 6 个顶点 = 2 个三角形 = 整块矩形
+    glBindVertexArray(vao_);
+    glDrawArrays(GL_TRIANGLES, 0, 6);
 
-    // ② 显示：main 里紧接着调用 glfwSwapBuffers，把这一帧翻到屏幕上（见文档）
 }
 
 } // namespace cg

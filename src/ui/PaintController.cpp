@@ -1,5 +1,4 @@
-// PaintController.cpp
-// 实现交互控制器：把鼠标键盘事件翻译成绘图/填充/裁剪操作，两层渲染（提交层缓存 + 每帧预览），最终像素交给 FrameBuffer。
+// PaintController.cpp — 交互控制器：事件 → 绘图/填充/裁剪/变换。
 #include "ui/PaintController.hpp"
 #include "curves/Bezier.hpp"
 #include "curves/BSpline.hpp"
@@ -60,13 +59,13 @@ raster::Rect rectFrom(IPoint p1, IPoint p2) {
             std::max(p1.y, p2.y)};
 }
 
-// ---- 变换辅助（实验三） ----
+// ---- 变换辅助 ----
 constexpr float kPiF = 3.14159265358979f;
 constexpr float kHitTol = 5.0f;   // 选中命中容差（像素）
 constexpr float kSnapTol = 12.0f; // 对接点吸附容差（像素）
 
-// ---- 修饰键约束（Shift 45° 吸附 / Ctrl 定步长） ----
-constexpr float kStepPx = 20.0f; // Ctrl 步进长度（像素，README 已注明可调）
+// ---- 修饰键约束：Shift 45° 吸附 / Ctrl 定步长 ----
+constexpr float kStepPx = 20.0f;
 
 // Shift 约束：把向量方向吸附到 45° 整数倍，保留沿该方向的投影长度（可为负 = 反向）
 FPoint snapDir45(FPoint v) {
@@ -113,7 +112,7 @@ bool degInRange(float deg, float start, float end) {
     return span <= 0.0f || normDeg(deg - start) <= span;
 }
 
-// 点到线段的最近点（返回距离与投影点；切向由调用方用边向量算，避免多余的 sqrt）
+// 点到线段的最近点（距离 + 投影点）。
 struct SegmentProjection {
     float dist = 0.0f;
     FPoint point{};
@@ -136,7 +135,7 @@ float distToSegment(IPoint p, IPoint a, IPoint b) {
     return projectOnSegment(p, toF(a), toF(b)).dist;
 }
 
-// 顶点/控制点的平均位置（课程口径的重心：多边形=顶点平均，曲线=控制点平均）
+// 顶点/控制点平均（课程口径的重心）。
 template <typename Pt>
 FPoint averageOf(const std::vector<Pt>& pts) {
     FPoint sum{0.0f, 0.0f};
@@ -163,7 +162,7 @@ bool pointInPolygon(IPoint p, const std::vector<IPoint>& poly) {
     return inside;
 }
 
-// 矩阵作用到一个点并取整（图形参数是整数像素坐标，变换结果四舍五入回存）
+// 矩阵作用到点并取整（图形参数为整数像素）。
 IPoint xformPt(const geom::Mat3& m, IPoint p) { return roundPt(geom::apply(m, toF(p))); }
 
 } // namespace
@@ -176,7 +175,7 @@ Color PaintController::currentFillColor() const {
     return kPalette[fillColorIdx_];
 }
 
-// 直线拖拽终点：Shift 按住时方向吸附 45° 整数倍（长度取投影分量）
+// 直线拖拽终点（Shift 吸附 45°）。
 IPoint PaintController::lineDragEnd() const {
     if (!shiftHeld_) {
         return curr_;
@@ -187,7 +186,7 @@ IPoint PaintController::lineDragEnd() const {
             press_.y + static_cast<int>(std::lround(d.y))};
 }
 
-// 圆/弧拖拽半径：Ctrl 按住时按 kStepPx（默认 20px）步进取整
+// 圆/弧拖拽半径（Ctrl 按 kStepPx 步进）。
 int PaintController::dragRadius() const {
     const float r = dist(press_, curr_);
     return ctrlHeld_ ? quantStepLen(r) : static_cast<int>(std::lround(r));
@@ -195,7 +194,7 @@ int PaintController::dragRadius() const {
 
 const char* PaintController::clipAlgoName() const {
     if (clipWin_.valid && clipWin_.kind == ClipWindow::Kind::ConvexPoly) {
-        return "Cyrus-Beck"; // 凸多边形窗口用参数化裁剪（挑战题）
+        return "Cyrus-Beck";
     }
     return kClipAlgoNames[clipAlgoIdx_];
 }
@@ -218,7 +217,7 @@ bool PaintController::clipLine(IPoint& a, IPoint& b) const {
     return true;
 }
 
-// 图形轮廓重描：线/圆/弧/多边形边/曲线采样折线共用，选中高亮直接复用它。
+// 图形轮廓重描：线/圆/弧/多边形边/曲线折线共用。
 void PaintController::drawOutline(FrameBuffer& fb, const Shape& s, const Color& c,
                                   const raster::LineStyle& ls) const {
     switch (s.mode) {
@@ -281,7 +280,7 @@ void PaintController::drawShape(FrameBuffer& fb, const Shape& s) const {
         drawOutline(fb, s, s.color, s.style);
         break;
     case Mode::Transform:
-        break; // 变换模式没有"图形"本体（选中/参考点标记画在预览层）
+        break; // 变换模式无图形本体
     }
 }
 
@@ -308,8 +307,7 @@ void PaintController::commitRender() {
     committed_->clear(Color::Black());
 
     if (mode_ == Mode::Clip && !clipWin_.valid) {
-        // 首次进入裁剪模式：给一个居中的默认矩形窗口，随时可被 K/P 重设。
-        // 必须在绘制图形之前建立，否则首帧的裁剪线会因"无窗口"而整条画出
+        // 首次进入裁剪模式：给一个居中的默认矩形窗口。
         clipWin_.kind = ClipWindow::Kind::Rect;
         clipWin_.rect = {committed_->width() / 5, committed_->height() / 5,
                          committed_->width() * 4 / 5, committed_->height() * 4 / 5};
@@ -319,12 +317,10 @@ void PaintController::commitRender() {
     for (const auto& s : shapes_) {
         drawShape(*committed_, s);
     }
-    // 裁剪窗口边框不画进提交层：它在预览层绘制（常驻裁剪时所有模式可见，且不被掩码覆盖）
+    // 裁剪窗口边框画在预览层，不进提交层。
 }
 
-// 常驻裁剪的显示层缓存：窗口内照抄提交层，窗口外保持背景色（黑）。
-// 只在提交层重绘/裁剪窗变化/画布尺寸变化时重建，之后每帧一条 memcpy 上屏。
-// 不改提交层——关掉开关，原图立即完整恢复。
+// 常驻裁剪显示层缓存：窗口内照抄提交层，窗口外保持黑底。
 void PaintController::rebuildClipCache() {
     const int w = committed_->width();
     const int h = committed_->height();
@@ -387,9 +383,9 @@ void PaintController::copyCommittedClipped(FrameBuffer& fb) {
 }
 
 void PaintController::drawPreview(FrameBuffer& fb) const {
-    // 进行中的拖拽预览（黄色/绿色为待定内容，不进入提交层）
+    // 进行中的拖拽预览（不进入提交层）。
     if (dragging_) {
-        const int r = dragRadius(); // 圆/弧半径（Ctrl 步进）
+        const int r = dragRadius();
         switch (mode_) {
         case Mode::Line:
             raster::drawLine(fb, press_, lineDragEnd(), Color::Yellow(), currentStyle());
@@ -416,7 +412,7 @@ void PaintController::drawPreview(FrameBuffer& fb) const {
         case Mode::SeedFill:
         case Mode::Transform:
         case Mode::Curve:
-            break; // 曲线不用拖拽预览（输入预览/控制点手柄在本函数后面单独画）
+            break;
         }
     }
 
@@ -456,12 +452,12 @@ void PaintController::drawPreview(FrameBuffer& fb) const {
         }
     }
 
-    // 曲线模式：已提交曲线的控制多边形与手柄（控制点可抓取）
+    // 曲线模式：控制多边形与手柄。
     if (mode_ == Mode::Curve) {
         drawCurveHandles(fb);
     }
 
-    // 曲线输入：控制多边形橡皮筋 + 以光标作临时末控制点的曲线实时预览
+    // 曲线输入：控制多边形橡皮筋 + 实时预览。
     if (mode_ == Mode::Curve && !pendingCurve_.empty()) {
         for (std::size_t i = 0; i + 1 < pendingCurve_.size(); ++i) {
             raster::drawLine(fb, pendingCurve_[i], pendingCurve_[i + 1], Color::White(), {});
@@ -484,8 +480,8 @@ void PaintController::drawPreview(FrameBuffer& fb) const {
         }
     }
 
-    // 裁剪窗口边框（预览层）：常驻裁剪开启时所有模式可见（青色虚线）；
-    // 未开启时仅在裁剪模式显示（白色实线，作为算法演示的背景窗口）
+    // 裁剪窗口边框：常驻裁剪时所有模式可见（青色虚线），
+    // 否则仅裁剪模式显示（白色实线）。
     if (clipWin_.valid) {
         if (clipOn_) {
             drawClipWindow(fb, Color::Cyan(), true);
@@ -494,12 +490,12 @@ void PaintController::drawPreview(FrameBuffer& fb) const {
         }
     }
 
-    // 变换模式标记：选中=橙色高亮+虚线外接矩形+控制柄；青=当前参考点，黄=等待指定的参考点，橙=A 的对接点
+    // 变换模式标记：选中橙色、参考点青色、对接点橙色。
     if (mode_ == Mode::Transform) {
         if (bandSelect_) { // 框选橡皮筋（品红虚线）
             drawRectOutline(fb, rectFrom(bandStart_, curr_), Color::Magenta(), {0xF0F0u, 1});
         }
-        drawSelection(fb); // 画板式选择：高亮重描 + 外接矩形 + 控制柄（替代旧的重心十字）
+        drawSelection(fb);
         if (!selected_.empty()) {
             drawCross(fb, roundPt(activeRefPoint()), Color::Cyan(), 6);
         }
@@ -524,25 +520,25 @@ void PaintController::render(FrameBuffer& fb) {
     if (dirty_) {
         commitRender();
         dirty_ = false;
-        clipCacheDirty_ = true; // 提交层变了，裁剪掩码缓存失效
+        clipCacheDirty_ = true;
     }
     if (clipOn_ && clipWin_.valid) {
-        copyCommittedClipped(fb); // 常驻裁剪：缓存命中时只做一次整块拷贝
+        copyCommittedClipped(fb);
     } else {
         fb.copyFrom(*committed_); // 提交层 → 显示层
     }
     drawPreview(fb);
-    drawToolbar(fb);          // 任务栏画在最上层（UI 元素，不属于画布内容）
+    drawToolbar(fb);
 }
 
 void PaintController::onKey(int key, int action, int mods) {
-    titleDirty_ = true; // 标题只可能在输入事件后变化，主循环其余帧读缓存
-    shiftHeld_ = (mods & GLFW_MOD_SHIFT) != 0; // 任意事件都刷新修饰键状态（拖拽中按下也生效）
+    titleDirty_ = true;
+    shiftHeld_ = (mods & GLFW_MOD_SHIFT) != 0;
     ctrlHeld_ = (mods & GLFW_MOD_CONTROL) != 0;
     if (action != GLFW_PRESS && action != GLFW_REPEAT) {
         return;
     }
-    // 键盘只是"快捷键"：与任务栏按钮共用同一操作入口
+    // 键盘与任务栏按钮共用 handleAction。
     switch (key) {
     case GLFW_KEY_1:
     case GLFW_KEY_L: handleAction(Act::ModeLine); break;
@@ -589,7 +585,7 @@ void PaintController::switchMode(Mode m) {
     markDirty();
 }
 
-// 键盘与任务栏按钮的统一操作入口：所有交互动作的真正实现
+// 键盘与任务栏按钮的统一操作入口。
 void PaintController::handleAction(Act a) {
     switch (a) {
     case Act::ModeLine: switchMode(Mode::Line); break;
@@ -602,7 +598,7 @@ void PaintController::handleAction(Act a) {
     case Act::ModeCurve: switchMode(Mode::Curve); break;
     case Act::CurveType:
         if (mode_ == Mode::Curve) {
-            curveBSpline_ = !curveBSpline_; // 切换"新曲线"的类型，已提交曲线不受影响
+            curveBSpline_ = !curveBSpline_;
         }
         break;
     case Act::CurveClose:
@@ -671,7 +667,7 @@ void PaintController::handleAction(Act a) {
         break;
     case Act::ClipToggle:
         if (clipWin_.valid) {
-            clipOn_ = !clipOn_; // 常驻裁剪开关：窗口外内容隐藏/恢复（不动提交层）
+            clipOn_ = !clipOn_;
         }
         break;
     case Act::ScaleUp:
@@ -722,7 +718,7 @@ void PaintController::handleAction(Act a) {
                     toErase.push_back(idx);
                 }
             }
-            // 删除父图形时，绑定在它上面的种子填充一起删掉，避免留下孤立色块
+            // 删父图形时一并删掉绑定的种子填充。
             for (int i = 0; i < static_cast<int>(shapes_.size()); ++i) {
                 const Shape& s = shapes_[i];
                 if (s.mode == Mode::SeedFill && s.parentId != 0 &&
@@ -752,7 +748,7 @@ void PaintController::handleAction(Act a) {
 
 // ================= 自绘任务栏 =================
 
-// 任务栏总高随字体度量变化：上下 2px 边距 + 两行按钮（行高 = 字高 + 8）+ 行间 3px
+// 任务栏总高随字体度量变化（两行按钮 + 边距）。
 int PaintController::toolbarHeight() const {
     const int rowH = text::height() + 8;
     return 2 + rowH + 3 + rowH + 2;
@@ -821,13 +817,13 @@ void PaintController::buildToolbar(std::vector<ToolButton>& btns) const {
         x = add(Act::NudgeU, "↑", x, y2, false);
         x = add(Act::NudgeD, "↓", x, y2, false);
     }
-    // 常驻裁剪开关：定义过裁剪窗口后所有模式都显示（V 键同效）
+    // 常驻裁剪开关：定义过窗口后所有模式都显示。
     if (clipWin_.valid) {
         add(Act::ClipToggle, clipOn_ ? "V 裁剪:开" : "V 裁剪:关", x + 8, y2, clipOn_);
     }
 }
 
-// 影响任务栏布局/文字/高亮的状态指纹；指纹不变时直接复用缓存帧
+// 状态指纹：不变时复用缓存帧。
 std::uint64_t PaintController::toolbarKey(int width) const {
     std::uint64_t k = static_cast<std::uint64_t>(width) << 32;
     k |= static_cast<std::uint64_t>(mode_);
@@ -849,7 +845,7 @@ void PaintController::renderToolbar(FrameBuffer& fb,
     fb.fillRect(0, 0, fb.width() - 1, fb.height() - 1, kBg);
     for (const auto& b : btns) {
         fb.fillRect(b.x, b.y, b.x + b.w - 1, b.y + b.h - 1, b.active ? kActive : kFace);
-        fb.fillRect(b.x, b.y, b.x + b.w - 1, b.y, kBorder); // 1px 边框
+        fb.fillRect(b.x, b.y, b.x + b.w - 1, b.y, kBorder);
         fb.fillRect(b.x, b.y + b.h - 1, b.x + b.w - 1, b.y + b.h - 1, kBorder);
         fb.fillRect(b.x, b.y, b.x, b.y + b.h - 1, kBorder);
         fb.fillRect(b.x + b.w - 1, b.y, b.x + b.w - 1, b.y + b.h - 1, kBorder);
@@ -869,15 +865,14 @@ void PaintController::drawToolbar(FrameBuffer& fb) const {
         renderToolbar(*toolbarCache_, toolbarLayout_);
         toolbarCacheKey_ = key;
     }
-    for (int y = 0; y < tbH; ++y) { // 命中缓存：逐行整段上屏，不再排字
+    for (int y = 0; y < tbH; ++y) {
         fb.copySpanFrom(*toolbarCache_, y, 0, fb.width() - 1);
     }
 }
 
 bool PaintController::toolbarPress(IPoint p) {
     const int tbH = toolbarHeight();
-    // 负坐标是拖拽到窗口外时的越界鼠标事件，不属于任务栏：放行给画布逻辑，
-    // 否则按住图形拖出窗口上缘再回来会"松不开"（按下/释放被吞）
+    // 负坐标是越界鼠标事件，放行给画布逻辑。
     if (p.y < 0 || p.y >= tbH || p.x < 0) {
         return false;
     }
@@ -885,11 +880,11 @@ bool PaintController::toolbarPress(IPoint p) {
     buildToolbar(btns);
     for (const auto& b : btns) {
         if (p.x >= b.x && p.x < b.x + b.w && p.y >= b.y && p.y < b.y + b.h) {
-            handleAction(b.act); // 内容变更由 handleAction 决定是否标脏
+            handleAction(b.act);
             return true;
         }
     }
-    return true; // 点在栏上但没点中按钮：吞掉事件，不落到画布
+    return true; // 未点中按钮：吞掉
 }
 
 void PaintController::closePolygon() {
@@ -909,16 +904,16 @@ void PaintController::closePolygon() {
 void PaintController::setRectClipWindow(IPoint p1, IPoint p2) {
     const raster::Rect r = rectFrom(p1, p2);
     if (r.xmax - r.xmin < 8 || r.ymax - r.ymin < 8) {
-        return; // 太小的窗口忽略（避免误拖成一个点）
+        return; // 太小的窗口忽略
     }
     clipWin_.kind = ClipWindow::Kind::Rect;
     clipWin_.rect = r;
     clipWin_.valid = true;
-    clipOn_ = true; // 显式定义窗口 → 常驻裁剪自动开启
+    clipOn_ = true;
     markDirty();
 }
 
-// ================= 曲线（实验四） =================
+// ================= 曲线 =================
 
 void PaintController::commitCurve() {
     if (pendingCurve_.size() >= 2) {
@@ -942,7 +937,7 @@ std::vector<FPoint> PaintController::curveSamples(const Shape& s) const {
                      : curves::sampleBezier(s.curve, kCurveSegments);
 }
 
-// 曲线模式下可抓取的控制点：从上层图形往下找，命中容差与选中一致
+// 曲线模式下可抓取的控制点（从上层往下找）。
 std::pair<int, int> PaintController::pickCurveCtrl(IPoint p) const {
     for (int i = static_cast<int>(shapes_.size()) - 1; i >= 0; --i) {
         const Shape& s = shapes_[static_cast<std::size_t>(i)];
@@ -958,8 +953,7 @@ std::pair<int, int> PaintController::pickCurveCtrl(IPoint p) const {
     return {-1, -1};
 }
 
-// 曲线模式的辅助显示（预览层）：已提交曲线的控制多边形（暗灰虚线）+ 控制点手柄，
-// 正被拖拽的控制点用橙色高亮——控制点即"把手"，点住拖拽实时改形
+// 曲线辅助显示：控制多边形（暗灰虚线）+ 控制点手柄，拖拽中的点橙色高亮。
 void PaintController::drawCurveHandles(FrameBuffer& fb) const {
     for (int i = 0; i < static_cast<int>(shapes_.size()); ++i) {
         const Shape& s = shapes_[static_cast<std::size_t>(i)];
@@ -978,9 +972,9 @@ void PaintController::drawCurveHandles(FrameBuffer& fb) const {
     }
 }
 
-// ================= 变换（实验三） =================
+// ================= 变换 =================
 
-// 种子填充是像素操作的记录、裁剪线段是演示辅助，都不是参数图形，不参与选中/变换
+// 种子填充/裁剪线段不是参数图形，不参与选中与变换。
 bool PaintController::shapeSelectable(const Shape& s) const {
     return s.mode == Mode::Line || s.mode == Mode::Circle || s.mode == Mode::Arc ||
            s.mode == Mode::Polygon || s.mode == Mode::Curve;
@@ -997,7 +991,7 @@ FPoint PaintController::shapeCentroid(const Shape& s) const {
     case Mode::Circle:
     case Mode::Arc:
     default:
-        return toF(s.a); // 圆/弧的重心取圆心
+        return toF(s.a);
     }
 }
 
@@ -1030,11 +1024,11 @@ void PaintController::transformSelected(const geom::Mat3& m, float rotDeg, float
         }
         applyToShape(shapes_[idx], m, rotDeg, scaleF);
     }
-    transformAttachedSeedsForSelection(m, false); // 键盘变换：种子跟随所属图形
+    transformAttachedSeedsForSelection(m, false);
     markDirty();
 }
 
-// 选中图形参数快照：拖拽期间每帧从这份快照重算，避免整数参数逐帧舍入累积漂移。
+// 选中参数快照：拖拽期间从快照重算，避免整数舍入累积。
 void PaintController::snapshotSelection() {
     selSnapshot_.clear();
     selSnapshot_.reserve(selected_.size());
@@ -1045,8 +1039,7 @@ void PaintController::snapshotSelection() {
     }
 }
 
-// 开始整体拖拽：记录按下点（绝对式偏移的锚）并快照当前选中集合。
-// 控制柄拖拽和外接矩形拖拽都从这里进入，保证 selSnapshot_ 与 selected_ 同序。
+// 开始整体拖拽：记录锚点并快照选中集合。
 void PaintController::beginXformDrag(IPoint anchor) {
     xformDrag_ = true;
     lastDrag_ = anchor;
@@ -1054,14 +1047,13 @@ void PaintController::beginXformDrag(IPoint anchor) {
     snapshotAttachedSeeds();
 }
 
-// 图形入列表并分配稳定 id：种子填充用 parentId 指向所属圆/多边形，
-// 下标会随删除/重排变化，id 不会。
+// 入列表并分配稳定 id（种子填充用 parentId 指向所属图形）。
 void PaintController::addShape(Shape s) {
     s.id = nextShapeId_++;
     shapes_.push_back(std::move(s));
 }
 
-// 找包含点 p 的最上层闭合图形（圆内部 / 多边形内部）；没有则返回 0（自由种子）
+// 包含 p 的最上层闭合图形 id；无则 0（自由种子）。
 std::uint64_t PaintController::findSeedParent(IPoint p) const {
     for (int i = static_cast<int>(shapes_.size()) - 1; i >= 0; --i) {
         const Shape& s = shapes_[i];
@@ -1076,7 +1068,7 @@ std::uint64_t PaintController::findSeedParent(IPoint p) const {
     return 0;
 }
 
-// 拖拽开始时记录选中图形所绑定的种子点；拖拽期间每帧从这份快照重算，避免整数漂移
+// 拖拽开始：快照选中图形的附加种子。
 void PaintController::snapshotAttachedSeeds() {
     attachedSeedSnapshot_.clear();
     auto selectedId = [&](std::uint64_t id) {
@@ -1095,8 +1087,7 @@ void PaintController::snapshotAttachedSeeds() {
     }
 }
 
-// 变换某个图形绑定的所有种子。useSnapshot=true 时从拖拽起点的种子快照用同一矩阵重算；
-// 键盘/对接等一次性变换直接作用于当前种子。
+// 变换某图形的附加种子；useSnapshot=true 时从拖拽起点快照重算。
 void PaintController::transformSeedsOfParent(std::uint64_t parentId, const geom::Mat3& m,
                                              bool useSnapshot) {
     const Shape* parent = nullptr;
@@ -1136,8 +1127,7 @@ void PaintController::transformAttachedSeedsForSelection(const geom::Mat3& m, bo
     }
 }
 
-// 变换/取整后把种子钳回父图形内部。圆：向圆心投影到 radius-1；多边形：
-// 先看原位，落在外面就在 1~8px 邻域找最近内点，最后退回顶点平均（若它在内部）。
+// 取整后把种子钳回父图形内（圆投影到半径内，多边形找最近内点）。
 IPoint PaintController::clampSeedToParent(IPoint seed, const Shape& parent) const {
     if (parent.mode == Mode::Circle) {
         if (parent.radius <= 1) {
@@ -1178,8 +1168,7 @@ IPoint PaintController::clampSeedToParent(IPoint seed, const Shape& parent) cons
     return seed;
 }
 
-// 矩阵作用到图形参数；rotDeg/scaleF 是矩阵对应的旋转角/等比因子，
-// 圆/弧的参数化字段（半径、角度）按它们修正（设计决策见 issue #35）
+// 矩阵作用到图形参数；圆/弧的半径与角度按 rotDeg/scaleF 修正。
 void PaintController::applyToShape(Shape& s, const geom::Mat3& m, float rotDeg, float scaleF) {
     switch (s.mode) {
     case Mode::Line:
@@ -1202,7 +1191,7 @@ void PaintController::applyToShape(Shape& s, const geom::Mat3& m, float rotDeg, 
         }
         break;
     case Mode::Curve:
-        // 控制点是浮点参数：直接保留浮点精度，不经过取整（Bezier 变换后仍是 Bezier）
+        // 控制点是浮点参数，不取整。
         for (auto& p : s.curve) {
             p = geom::apply(m, p);
         }
@@ -1225,7 +1214,7 @@ int PaintController::hitShape(IPoint p) const {
             }
             break;
         case Mode::Circle: {
-            // 圆内任意位置，或圆环向外 5px：合并为"到圆心 <= r + 5"，省掉 sqrt/fabs
+            // 圆内或圆环外 5px：到圆心 <= r + 5。
             const float reach = static_cast<float>(s.radius) + kHitTol;
             if (distSq(p, s.a) <= reach * reach) {
                 return i;
@@ -1242,7 +1231,7 @@ int PaintController::hitShape(IPoint p) const {
             if (pointInPolygon(p, s.polygon)) {
                 return i;
             }
-            // 轮廓 5px 容差：未填充多边形屏幕上只有边，点在边附近也应该能抓住
+            // 未填充多边形按轮廓 5px 容差命中。
             const int n = static_cast<int>(s.polygon.size());
             for (int k = 0; k < n; ++k) {
                 if (distToSegment(p, s.polygon[k], s.polygon[(k + 1) % n]) <= kHitTol) {
@@ -1268,8 +1257,7 @@ int PaintController::hitShape(IPoint p) const {
     return -1;
 }
 
-// 框选：图形是否与矩形相交。线段/多边形边按 ~4px 步进采样，圆用解析法（圆心到矩形
-// 最近点的距离 ≤ 半径，含"圆整个包住矩形"），弧在角度范围内采样。
+// 框选相交判定：线段/多边形边采样，圆用解析法，弧按角度范围。
 bool PaintController::shapeIntersectsRect(const Shape& s, const raster::Rect& r) const {
     auto inRect = [&](IPoint p) {
         return p.x >= r.xmin && p.x <= r.xmax && p.y >= r.ymin && p.y <= r.ymax;
@@ -1321,7 +1309,7 @@ bool PaintController::shapeIntersectsRect(const Shape& s, const raster::Rect& r)
                                    {r.xmin, r.ymax}};
         for (const auto& c : corners) {
             if (pointInPolygon(c, s.polygon)) {
-                return true; // 矩形整个落在多边形内部
+                return true;
             }
         }
         const int n = static_cast<int>(s.polygon.size());
@@ -1346,7 +1334,7 @@ bool PaintController::shapeIntersectsRect(const Shape& s, const raster::Rect& r)
     }
 }
 
-// 点击点吸附到某图形轮廓的最近点，同时给出该点的单位切向（对接拼接用）
+// 吸附到轮廓最近点，并给出单位切向（对接用）。
 int PaintController::pickOutlineShape(IPoint p, FPoint& outPt, FPoint& outTan, int skipIdx) const {
     for (int i = static_cast<int>(shapes_.size()) - 1; i >= 0; --i) {
         const Shape& s = shapes_[i];
@@ -1415,7 +1403,7 @@ int PaintController::pickOutlineShape(IPoint p, FPoint& outPt, FPoint& outTan, i
             break;
         }
         case Mode::Curve: {
-            // 轮廓 = 采样折线：取最近段的投影点，切向沿该段方向
+            // 采样折线：取最近段投影点，切向沿该段。
             const std::vector<FPoint> samples = curveSamples(s);
             float best = 1e30f;
             FPoint bestPt{}, bestTan{};
@@ -1443,7 +1431,7 @@ int PaintController::pickOutlineShape(IPoint p, FPoint& outPt, FPoint& outTan, i
     return -1;
 }
 
-// ================= 画板式选择编辑（实验三增强：外接矩形 + 控制柄 + 高亮） =================
+// ================= 画板式选择编辑：外接矩形 + 控制柄 =================
 
 // 单图形最小外接矩形（矩形字段为像素闭区间）
 raster::Rect PaintController::shapeBounds(const Shape& s) const {
@@ -1471,7 +1459,7 @@ raster::Rect PaintController::shapeBounds(const Shape& s) const {
             r.ymax = std::max(r.ymax, p.y);
         };
         include(pointAt(s.endDeg));
-        // 圆的轴向极值只可能出现在 0/90/180/270；落在弧段内的才纳入包围盒
+        // 圆的轴向极值在 0/90/180/270，落在弧段内的才纳入。
         for (const float deg : {0.0f, 90.0f, 180.0f, 270.0f}) {
             if (degInRange(deg, s.startDeg, s.endDeg)) {
                 include(pointAt(deg));
@@ -1493,7 +1481,7 @@ raster::Rect PaintController::shapeBounds(const Shape& s) const {
         return r;
     }
     case Mode::Curve: {
-        // 外接矩形取采样折线范围（比控制点范围更贴合曲线本体）
+        // 取采样折线范围（比控制点范围更贴合曲线）。
         const std::vector<FPoint> samples = curveSamples(s);
         if (samples.empty()) {
             return {s.a.x, s.a.y, s.a.x, s.a.y};
@@ -1536,7 +1524,7 @@ raster::Rect PaintController::selectionBounds() const {
     return r;
 }
 
-// 圆/弧没有椭圆参数化：非等比缩放表达不了 → 选中集合含圆/弧时只允许等比（4 角柄）
+// 圆/弧无法表达椭圆：含圆/弧时只允许等比缩放（4 角柄）。
 bool PaintController::selectionUniformOnly() const {
     for (int idx : selected_) {
         if (idx < 0 || idx >= static_cast<int>(shapes_.size())) {
@@ -1549,7 +1537,7 @@ bool PaintController::selectionUniformOnly() const {
     return false;
 }
 
-// 恰好单选一条线段：进入端点编辑模式（画两个端点柄，不画外接矩形）
+// 单选一条线段：端点编辑模式。
 bool PaintController::selEndpointsMode() const {
     return selected_.size() == 1 && selected_[0] >= 0 &&
            selected_[0] < static_cast<int>(shapes_.size()) &&
@@ -1607,7 +1595,7 @@ PaintController::SelHandle PaintController::pickHandle(IPoint p) const {
     return SelHandle::None;
 }
 
-// 实心方柄（7×7 橙色，拖拽中的柄高亮为白色；黑色描边保证在亮色图形上可见）
+// 实心方柄（拖拽中高亮为白色）。
 void PaintController::drawHandleBox(FrameBuffer& fb, IPoint c, bool hot) const {
     const Color fill = hot ? Color::White() : Color(255, 150, 40);
     for (int y = -3; y <= 3; ++y) {
@@ -1619,10 +1607,9 @@ void PaintController::drawHandleBox(FrameBuffer& fb, IPoint c, bool hot) const {
 }
 
 void PaintController::drawSelection(FrameBuffer& fb) const {
-    // 1) 高亮重描：只重画橙色加粗轮廓，不重填填充区域——
-    //    选中仍然一眼可辨，同时保留原填充色，也避免预览层每帧再做一次整块扫描填充
+    // 1) 高亮重描：只画橙色加粗轮廓，不重填。
     const Color hi(255, 150, 40);
-    const raster::LineStyle hiStyle{0xFFFFu, 3}; // 实线加粗，虚线图形也能看清选中态
+    const raster::LineStyle hiStyle{0xFFFFu, 3};
     for (int idx : selected_) {
         if (idx >= 0 && idx < static_cast<int>(shapes_.size())) {
             drawOutline(fb, shapes_[idx], hi, hiStyle);
@@ -1639,7 +1626,7 @@ void PaintController::drawSelection(FrameBuffer& fb) const {
     if (b.xmax <= b.xmin || b.ymax <= b.ymin) {
         return;
     }
-    drawRectOutline(fb, b, Color(255, 150, 40), {0xF0F0u, 1}); // 橙色虚线外接矩形
+    drawRectOutline(fb, b, Color(255, 150, 40), {0xF0F0u, 1});
     auto hot = [&](SelHandle h) { return handleDrag_ && activeHandle_ == h; };
     drawHandleBox(fb, {b.xmin, b.ymin}, hot(SelHandle::NW));
     drawHandleBox(fb, {b.xmax, b.ymin}, hot(SelHandle::NE));
@@ -1655,8 +1642,7 @@ void PaintController::drawSelection(FrameBuffer& fb) const {
     }
 }
 
-// 柄拖拽中每帧调用：端点柄直接改线段参数；bbox 柄以对角（对边）为锚做缩放。
-// 关键：从拖拽开始时的快照重算（而非在当前参数上叠加）——参数是整数，逐帧叠加会累积舍入漂移
+// 柄拖拽：端点柄改线段参数，bbox 柄以对角为锚缩放；从拖拽起点快照重算。
 void PaintController::applyHandleDrag(IPoint pos) {
     if (activeHandle_ == SelHandle::EndA || activeHandle_ == SelHandle::EndB) {
         if (handleShapeIdx_ >= 0 && handleShapeIdx_ < static_cast<int>(shapes_.size())) {
@@ -1691,7 +1677,7 @@ void PaintController::applyHandleDrag(IPoint pos) {
                        activeHandle_ == SelHandle::NE;
     const bool south = activeHandle_ == SelHandle::S || activeHandle_ == SelHandle::SW ||
                        activeHandle_ == SelHandle::SE;
-    // 锚点 = 柄的对角（角柄）/对边（边柄）；中列/中行柄另一轴不缩放
+    // 锚点 = 对角（角柄）/对边（边柄）。
     const float anchorX =
         east ? static_cast<float>(b0.xmin)
              : (west ? static_cast<float>(b0.xmax) : (b0.xmin + b0.xmax) * 0.5f);
@@ -1713,7 +1699,7 @@ void PaintController::applyHandleDrag(IPoint pos) {
     }
     float scaleF = 1.0f; // applyToShape 里圆/弧的半径等比因子（仅等比模式用到）
     if (selectionUniformOnly()) {
-        const float s = std::max(sx, sy); // 跟随拖拽幅度较大的轴，保持长宽比
+        const float s = std::max(sx, sy);
         sx = s;
         sy = s;
         scaleF = s;
@@ -1727,7 +1713,7 @@ void PaintController::applyHandleDrag(IPoint pos) {
         shapes_[idx] = selSnapshot_[k];
         applyToShape(shapes_[idx], m, 0.0f, scaleF);
     }
-    transformAttachedSeedsForSelection(m, true); // 柄缩放：种子从拖拽起点快照同步
+    transformAttachedSeedsForSelection(m, true);
     markDirty();
 }
 
@@ -1758,10 +1744,10 @@ void PaintController::cancelInProgress() {
 void PaintController::onMouseButton(int button, int action, int mods) {
     titleDirty_ = true;
     const bool press = (action == GLFW_PRESS);
-    shiftHeld_ = (mods & GLFW_MOD_SHIFT) != 0; // 鼠标事件刷新修饰键状态
+    shiftHeld_ = (mods & GLFW_MOD_SHIFT) != 0;
     ctrlHeld_ = (mods & GLFW_MOD_CONTROL) != 0;
 
-    // 任务栏优先：点中按钮（或点在栏上）不落到画布
+    // 任务栏优先：点在栏上不落到画布。
     if (button == 0 && press && toolbarPress(curr_)) {
         return;
     }
@@ -1778,7 +1764,7 @@ void PaintController::onMouseButton(int button, int action, int mods) {
                     clipWin_.poly.push_back({static_cast<float>(p.x), static_cast<float>(p.y)});
                 }
                 clipWin_.valid = true;
-                clipOn_ = true; // 显式定义窗口 → 常驻裁剪自动开启
+                clipOn_ = true;
                 markDirty();
             }
             pendingClipWin_.clear();
@@ -1815,7 +1801,7 @@ void PaintController::onMouseButton(int button, int action, int mods) {
                 Shape s;
                 s.mode = Mode::Line;
                 s.a = press_;
-                s.b = lineDragEnd(); // Shift：45° 方向吸附
+                s.b = lineDragEnd();
                 s.style = currentStyle();
                 addShape(std::move(s));
                 markDirty();
@@ -1823,7 +1809,7 @@ void PaintController::onMouseButton(int button, int action, int mods) {
                 Shape s;
                 s.mode = Mode::Circle;
                 s.a = press_;
-                s.radius = dragRadius(); // Ctrl：步进半径
+                s.radius = dragRadius();
                 s.style = currentStyle();
                 addShape(std::move(s));
                 markDirty();
@@ -1842,7 +1828,7 @@ void PaintController::onMouseButton(int button, int action, int mods) {
                 if (dist(press_, curr_) >= 1.0f) {
                     arcAdjust_ = true;
                     arcCenter_ = press_;
-                    arcRadius_ = dragRadius(); // Ctrl：步进半径
+                    arcRadius_ = dragRadius();
                     arcStart_ = angleOf(curr_, press_);
                 }
             }
@@ -1863,7 +1849,7 @@ void PaintController::onMouseButton(int button, int action, int mods) {
 
     case Mode::Polygon:
         if (press) {
-            pendingPolygon_.push_back(curr_); // 左键连点加顶点，右键闭合
+            pendingPolygon_.push_back(curr_);
         }
         break;
 
@@ -1871,8 +1857,8 @@ void PaintController::onMouseButton(int button, int action, int mods) {
         if (press) {
             Shape s;
             s.mode = Mode::SeedFill;
-            s.a = curr_; // 种子点
-            // 点在闭合图形内 → 绑定到它，图形变换时种子跟随；否则是自由种子填充
+            s.a = curr_;
+            // 点在闭合图形内则绑定，变换时跟随；否则自由种子。
             s.parentId = findSeedParent(curr_);
             s.color = currentFillColor();
             addShape(std::move(s));
@@ -1908,7 +1894,7 @@ void PaintController::onMouseButton(int button, int action, int mods) {
 
     case Mode::Transform:
         if (press) {
-            // 对接流程进行中：本次点击是"选对接点"，不改选中
+            // 对接中：本次点击选对接点，不改选中。
             if (dockStage_ > 0) {
                 FPoint pt{}, tan{};
                 const int idx = pickOutlineShape(curr_, pt, tan, dockAShapeIdx_);
@@ -1918,8 +1904,7 @@ void PaintController::onMouseButton(int button, int action, int mods) {
                     dockAShapeIdx_ = idx;
                     dockStage_ = 2;
                 } else if (idx >= 0 && dockStage_ == 2) {
-                    // 拼接 = 先绕 B 的对接点旋转 Δθ（两切向角差，±90° 内取最短），
-                    // 再把 B 的对接点平移到 A 的对接点上：M = T(A-B) · R(B, Δθ)
+                    // 拼接：绕 B 的对触点转 Δθ（±90° 内取最短），再平移到 A 的对触点。
                     float diff = degOf(dockATangent_) - degOf(tan);
                     while (diff > 90.0f) {
                         diff -= 180.0f;
@@ -1931,20 +1916,20 @@ void PaintController::onMouseButton(int button, int action, int mods) {
                         geom::translate(dockA_.x - pt.x, dockA_.y - pt.y),
                         geom::rotateAbout(pt.x, pt.y, diff * kPiF / 180.0f));
                     applyToShape(shapes_[idx], m, diff, 1.0f);
-                    transformSeedsOfParent(shapes_[idx].id, m, false); // 对接时种子同步
+                    transformSeedsOfParent(shapes_[idx].id, m, false);
                     dockStage_ = 0;
                     dockAShapeIdx_ = -1;
                     markDirty();
                 }
                 break;
             }
-            // 指定参考点：本次点击只设定参考点，不动选中（预览层每帧重画，无需重放提交层）
+            // 指定参考点：只设参考点，不动选中。
             if (refPick_) {
                 refPoint_ = curr_;
                 refPick_ = false;
                 break;
             }
-            // 画板式编辑：控制柄优先于图形命中（同曲线模式控制点先例）
+            // 控制柄优先于图形命中。
             if (!selected_.empty()) {
                 // 先剔除失效下标，保证 selSnapshot_ 与 selected_ 顺序对齐
                 selected_.erase(
@@ -1992,8 +1977,7 @@ void PaintController::onMouseButton(int button, int action, int mods) {
                     beginXformDrag(curr_);
                 }
             } else if (!selected_.empty()) {
-                // 多选组合体：外接矩形内部空白处按下也进入整体拖拽（PPT 组合体行为），
-                // 不再把这次按下当成"重新框选"而清掉选择
+                // 组合体：外接矩形内部空白按下也进入整体拖拽。
                 const raster::Rect b = selectionBounds();
                 const bool inBounds = curr_.x >= b.xmin && curr_.x <= b.xmax &&
                                       curr_.y >= b.ymin && curr_.y <= b.ymax;
@@ -2008,7 +1992,7 @@ void PaintController::onMouseButton(int button, int action, int mods) {
                 bandStart_ = curr_;
             }
         } else {
-            handleDrag_ = false; // 柄拖拽结束（快照使命完成）
+            handleDrag_ = false;
             activeHandle_ = SelHandle::None;
             handleShapeIdx_ = -1;
             selSnapshot_.clear();
@@ -2018,7 +2002,7 @@ void PaintController::onMouseButton(int button, int action, int mods) {
                 bandSelect_ = false;
                 const raster::Rect band = rectFrom(bandStart_, curr_);
                 if (band.xmax - band.xmin >= 4 || band.ymax - band.ymin >= 4) {
-                    // 框选：与矩形相交的可选图形全部选中；Shift=叠加，否则替换
+                    // 框选：相交即可选图形；Shift 叠加，否则替换。
                     if (!shiftHeld_) {
                         selected_.clear();
                     }
@@ -2040,7 +2024,7 @@ void PaintController::onMouseButton(int button, int action, int mods) {
 
     case Mode::Curve:
         if (press) {
-            // 输入空闲时优先抓取已提交曲线的控制点（按住拖拽 = 实时调整形状）
+            // 空闲时优先抓取曲线控制点。
             if (pendingCurve_.empty()) {
                 const auto grab = pickCurveCtrl(curr_);
                 if (grab.first >= 0) {
@@ -2051,7 +2035,7 @@ void PaintController::onMouseButton(int button, int action, int mods) {
                 }
             }
             if (!curveDrag_) {
-                pendingCurve_.push_back(curr_); // 左键连点加控制点，右键提交（预览层实时画）
+                pendingCurve_.push_back(curr_);
             }
         } else if (curveDrag_) {
             curveDrag_ = false;
@@ -2063,14 +2047,13 @@ void PaintController::onMouseButton(int button, int action, int mods) {
 }
 
 void PaintController::onMouseMove(IPoint pos, int mods) {
-    shiftHeld_ = (mods & GLFW_MOD_SHIFT) != 0; // 移动事件实时反映修饰键（GLFW 光标回调无 mods，
-    ctrlHeld_ = (mods & GLFW_MOD_CONTROL) != 0; // 由 Window 层查询键盘状态补齐）
-    // 控制柄拖拽：端点编辑 / bbox 缩放（每帧从快照重算，与拖拽平移互斥）
+    shiftHeld_ = (mods & GLFW_MOD_SHIFT) != 0;
+    ctrlHeld_ = (mods & GLFW_MOD_CONTROL) != 0;
+    // 控制柄拖拽：端点编辑 / bbox 缩放。
     if (handleDrag_ && mode_ == Mode::Transform) {
         applyHandleDrag(pos);
     }
-    // 拖拽平移：绝对式——从拖拽开始的快照整体平移到当前偏移（整数结果零累积）；
-    // Shift 按住时偏移方向吸附 45° 整数倍（水平/垂直/对角线）
+    // 拖拽平移：从快照整体平移（零累积），Shift 吸附 45°。
     if (xformDrag_ && mode_ == Mode::Transform && !selected_.empty()) {
         FPoint off{static_cast<float>(pos.x - lastDrag_.x),
                    static_cast<float>(pos.y - lastDrag_.y)};
@@ -2086,10 +2069,10 @@ void PaintController::onMouseMove(IPoint pos, int mods) {
             shapes_[idx] = selSnapshot_[k];
             applyToShape(shapes_[idx], m, 0.0f, 1.0f);
         }
-        transformAttachedSeedsForSelection(m, true); // 平移拖拽：种子从快照同步
+        transformAttachedSeedsForSelection(m, true);
         markDirty();
     }
-    // 曲线控制点拖拽：改参数（控制点），像素由提交层重算——实时跟随
+    // 曲线控制点拖拽：改参数，提交层重算。
     if (curveDrag_ && mode_ == Mode::Curve && dragShapeIdx_ >= 0 &&
         dragShapeIdx_ < static_cast<int>(shapes_.size())) {
         auto& curve = shapes_[static_cast<std::size_t>(dragShapeIdx_)].curve;

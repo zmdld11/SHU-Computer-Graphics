@@ -1,5 +1,4 @@
-// BSpline.cpp
-// 实现实验四（挑战题）的 clamped 节点矢量、Cox-de Boor 基函数与均匀采样。
+// BSpline.cpp — clamped 节点矢量、Cox-de Boor 基函数与均匀采样。
 #include "curves/BSpline.hpp"
 
 #include <algorithm>
@@ -7,7 +6,7 @@
 namespace cg::curves {
 
 std::vector<float> clampedKnots(int ctrlCount, int degree) {
-    // 节点数 = 控制点数 + 阶数；两端 p+1 重，内部 m-p-1 个均布
+    // 节点数 = 控制点数 + 阶数；两端 p+1 重，内部均布。
     const int p = std::max(0, degree);
     const int m = ctrlCount + p;
     std::vector<float> knots(static_cast<std::size_t>(m) + 1, 1.0f);
@@ -24,7 +23,7 @@ std::vector<float> clampedKnots(int ctrlCount, int degree) {
 
 float bsplineBasis(int i, int p, float u, const std::vector<float>& knots) {
     if (p == 0) {
-        // 零次基：半开区间 [u_i, u_{i+1})；u 恰为 1 时算在最后一段
+        // 零次基：半开区间 [u_i, u_{i+1})；u=1 归最后一段。
         const bool inSpan = (u >= knots[static_cast<std::size_t>(i)] &&
                              u < knots[static_cast<std::size_t>(i) + 1]) ||
                             (u >= 1.0f && knots[static_cast<std::size_t>(i)] <= 1.0f &&
@@ -57,7 +56,7 @@ std::vector<FPoint> sampleBSpline(const std::vector<FPoint>& controlPoints, int 
     if (segments < 1) {
         segments = 1;
     }
-    // 实际阶数 clamp 到 [0, 控制点数-1]：点不够就降阶，单点直接返回
+    // 阶数 clamp 到 [0, 控制点数-1]：点不够就降阶。
     const int p =
         std::min(std::max(0, degree), static_cast<int>(controlPoints.size()) - 1);
     if (p == 0) {

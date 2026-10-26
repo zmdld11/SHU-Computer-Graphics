@@ -1,5 +1,4 @@
-// Clip.cpp
-// 实验二裁剪算法：Cohen-Sutherland 编码裁剪、中点分割裁剪；挑战题 Cyrus-Beck 任意凸多边形窗口裁剪。
+// Clip.cpp — 裁剪：Cohen-Sutherland、中点分割、Cyrus-Beck（凸多边形窗口）。
 #include "raster/Clip.hpp"
 #include <algorithm>
 #include <cmath>
@@ -9,7 +8,7 @@
 namespace cg::raster {
 namespace {
 
-// 区域编码位（屏幕坐标：y 向下，"上"指 y 小于窗口上边）
+// 区域编码位（屏幕坐标 y 向下，"上"= y 小于 ymin）。
 enum OutCode : int {
     kInside = 0,
     kLeft = 1,   // x < xmin
@@ -38,15 +37,15 @@ void collectVisible(IPoint p, IPoint q, const Rect& w, std::vector<IPoint>& pts)
     const int c1 = outCode(p, w);
     const int c2 = outCode(q, w);
     if ((c1 & c2) != 0) {
-        return; // 完全不可见：整段剪掉
+        return;
     }
     if ((c1 | c2) == 0) {
-        pts.push_back(p); // 完全可见：两端都保留
+        pts.push_back(p);
         pts.push_back(q);
         return;
     }
     if (std::abs(q.x - p.x) <= 1 && std::abs(q.y - p.y) <= 1) {
-        // 已二分到 1 像素精度：把落在窗口内的那一端作为近似可见点
+        // 已到 1 像素精度：落在窗口内的一端作为近似可见点。
         if (c1 == 0) {
             pts.push_back(p);
         }
@@ -66,7 +65,7 @@ bool cohenSutherland(IPoint& a, IPoint& b, const Rect& win) {
     int ca = outCode(a, win);
     int cb = outCode(b, win);
 
-    // 每轮把某个窗外端点与它越过的窗口边界求交，端点单调向窗口收缩，必然收敛；
+    // 每轮取窗外端点与所越过的边界求交，端点单调收缩，必然收敛。
     for (int guard = 0; guard < 16; ++guard) {
         if ((ca | cb) == 0) {
             return true; // 完全可见
@@ -74,14 +73,13 @@ bool cohenSutherland(IPoint& a, IPoint& b, const Rect& win) {
         if ((ca & cb) != 0) {
             return false; // 完全不可见
         }
-        // 取处在窗外的那一端，与它所越过的那条窗口边界求交。
-        // 注意：交点可能落在“相邻边界之外”（例如越过上边界的交点其实在窗口左侧），
-        // 此时不能夹取到窗口内——下一轮会继续改与真正的边界求交（教材算法的循环语义）
+        // 取窗外那一端与所越过的边界求交；交点可能落在相邻边界之外，
+        // 此时不能夹取，下一轮继续与真正的边界求交（教材循环语义）。
         const int c = (ca != 0) ? ca : cb;
         const bool atA = (c == ca);
         double x = 0.0;
         double y = 0.0;
-        if ((c & kTop) != 0) { // 越过上边界 y = ymin（此时两端点 y 必不相同）
+        if ((c & kTop) != 0) { // 越过上边界 y = ymin
             y = static_cast<double>(win.ymin);
             x = a.x + (static_cast<double>(b.x - a.x) * (win.ymin - a.y)) /
                           static_cast<double>(b.y - a.y);
@@ -107,7 +105,7 @@ bool cohenSutherland(IPoint& a, IPoint& b, const Rect& win) {
             cb = outCode(b, win);
         }
     }
-    return false; // 防御性返回，正常不会到达
+    return false;
 }
 
 bool midpointSplit(IPoint& a, IPoint& b, const Rect& win) {
@@ -122,7 +120,7 @@ bool midpointSplit(IPoint& a, IPoint& b, const Rect& win) {
         return true;
     }
 
-    // 可见部分在一条线段上是连续的：按沿 a→b 方向的投影取最小/最大两点作为结果
+    // 可见部分连续：按 a→b 方向的投影取最小/最大两点。
     const long long dx = static_cast<long long>(b.x) - a.x;
     const long long dy = static_cast<long long>(b.y) - a.y;
     std::size_t iMin = 0;
@@ -155,7 +153,7 @@ bool cyrusBeck(FPoint& a, FPoint& b, const std::vector<FPoint>& convexWin) {
         return false;
     }
 
-    // 顶点绕向（有向面积符号）决定内法线的取法
+    // 顶点绕向（有向面积符号）决定内法线方向。
     double area2 = 0.0;
     for (int i = 0; i < n; ++i) {
         const FPoint& p1 = convexWin[i];
@@ -172,26 +170,25 @@ bool cyrusBeck(FPoint& a, FPoint& b, const std::vector<FPoint>& convexWin) {
     for (int i = 0; i < n; ++i) {
         const FPoint& p1 = convexWin[i];
         const FPoint& p2 = convexWin[(i + 1) % n];
-        // 内法线：与边方向垂直、指向多边形内部的那一侧。
-        // 屏幕坐标 y 向下：有向面积为正的环序下，内法线为 (-dy, dx)（推导见 issue 记录）
+        // 内法线：(-dy, dx) × 绕向（屏幕坐标 y 向下）。
         double nx = -winding * (p2.y - p1.y);
         double ny = winding * (p2.x - p1.x);
         const double len = std::sqrt(nx * nx + ny * ny);
         if (len <= 0.0) {
-            continue; // 退化边
+            continue;
         }
         nx /= len;
         ny /= len;
 
         const double f = nx * (a.x - p1.x) + ny * (a.y - p1.y); // a 到边界的有向距离
-        const double w = -(nx * dx + ny * dy);                  // 线段方向上的变化率
+        const double w = -(nx * dx + ny * dy);                  // 方向变化率
         if (std::abs(w) < 1e-12) {
             if (f < 0.0) {
-                return false; // 平行于该边且在窗外侧
+                return false;
             }
             continue;
         }
-        // 由 n·(P0 - Pe) + t·(n·d) ≥ 0 解 t 区间：w<0 → 下限（进入），w>0 → 上限（离开）
+        // 解 t 区间：w<0 为下限（进入），w>0 为上限（离开）。
         const double t = f / w;
         if (w < 0.0) {
             t0 = std::max(t0, t);
@@ -229,7 +226,7 @@ bool insideConvex(FPoint p, const std::vector<FPoint>& convexWin) {
             ++neg;
         }
     }
-    return pos == 0 || neg == 0; // 叉积同号（或为 0）→ 在内部或边界上
+    return pos == 0 || neg == 0; // 叉积同号或全 0 → 内部或边界上
 }
 
 } // namespace cg::raster
