@@ -472,8 +472,7 @@ void PaintController::drawPreview(FrameBuffer& fb) const {
             pts.push_back(toF(p));
         }
         pts.push_back(toF(curr_));
-        const std::vector<FPoint> samples =
-            curveBSpline_ ? curves::sampleBSpline(pts, 3, 64) : curves::sampleBezier(pts, 64);
+        const std::vector<FPoint> samples = sampleCurveKind(curveKind_, pts, 3, 64);
         for (std::size_t i = 0; i + 1 < samples.size(); ++i) {
             raster::drawLine(fb, roundPt(samples[i]), roundPt(samples[i + 1]), Color::Yellow(),
                              currentStyle());
@@ -611,12 +610,13 @@ void PaintController::handleAction(Act a) {
     case Act::ModeCurve: switchMode(Mode::Curve); break;
     case Act::CurveType:
         if (mode_ == Mode::Curve) {
-            curveBSpline_ = !curveBSpline_;
+            // 三态循环：Bezier → 固支 B 样条 → 均匀 B 样条 → Bezier。
+            curveKind_ = static_cast<CurveKind>((static_cast<int>(curveKind_) + 1) % 3);
             // 同时切换最近一条已提交曲线的类型：按一下就能看到两种样条的差别。
             for (auto it = shapes_.rbegin(); it != shapes_.rend(); ++it) {
                 if (it->mode == Mode::Curve) {
                     pushUndo();
-                    it->bspline = curveBSpline_;
+                    it->curveKind = curveKind_;
                     markDirty();
                     break;
                 }
@@ -834,8 +834,8 @@ void PaintController::buildToolbar(std::vector<ToolButton>& btns) const {
         x = add(Act::ClipPoly, "P 多边形窗", x, y2, false);
         x = add(Act::ClipAlgo, "M 算法", x, y2, false);
     } else if (mode_ == Mode::Curve) {
-        x = add(Act::CurveType, curveBSpline_ ? "B 样条:开" : "B 样条:关", x + 8, y2,
-                curveBSpline_);
+        x = add(Act::CurveType, std::string("B 类型:") + curveKindShort(curveKind_), x + 8, y2,
+                curveKind_ != CurveKind::Bezier);
         x = add(Act::CurveClose, "右键结束", x, y2, false);
     } else if (mode_ == Mode::Transform) {
         x = add(Act::ScaleUp, "+", x + 8, y2, false);
@@ -859,16 +859,16 @@ void PaintController::buildToolbar(std::vector<ToolButton>& btns) const {
 // 状态指纹：不变时复用缓存帧。
 std::uint64_t PaintController::toolbarKey(int width) const {
     std::uint64_t k = static_cast<std::uint64_t>(width) << 32;
-    k |= static_cast<std::uint64_t>(mode_);
+    k |= static_cast<std::uint64_t>(mode_);                                // 0-3
     k |= static_cast<std::uint64_t>(polygonFilled_) << 4;
     k |= static_cast<std::uint64_t>(clipWin_.valid) << 5;
     k |= static_cast<std::uint64_t>(clipOn_) << 6;
-    k |= static_cast<std::uint64_t>(curveBSpline_) << 7;
-    k |= static_cast<std::uint64_t>(refManual_) << 8;
-    k |= static_cast<std::uint64_t>(dockStage_ > 0) << 9;
-    k |= static_cast<std::uint64_t>(styleIdx_) << 10;
-    k |= static_cast<std::uint64_t>(widthIdx_) << 12;
-    k |= static_cast<std::uint64_t>(fillColorIdx_) << 14;
+    k |= static_cast<std::uint64_t>(static_cast<int>(curveKind_)) << 7;     // 7-8
+    k |= static_cast<std::uint64_t>(refManual_) << 9;
+    k |= static_cast<std::uint64_t>(dockStage_ > 0) << 10;
+    k |= static_cast<std::uint64_t>(styleIdx_) << 11;                      // 11-12
+    k |= static_cast<std::uint64_t>(widthIdx_) << 13;                      // 13-14
+    k |= static_cast<std::uint64_t>(fillColorIdx_) << 15;                  // 15-17
     return k;
 }
 
@@ -960,7 +960,7 @@ void PaintController::commitCurve() {
         for (const auto& p : pendingCurve_) {
             s.curve.push_back(toF(p));
         }
-        s.bspline = curveBSpline_;
+        s.curveKind = curveKind_;
         s.curveDeg = 3;
         s.style = currentStyle();
         addShape(std::move(s));
@@ -969,9 +969,33 @@ void PaintController::commitCurve() {
     pendingCurve_.clear();
 }
 
+const char* PaintController::curveKindName(CurveKind k) {
+    switch (k) {
+    case CurveKind::BSplineClamped: return "B样条·固支";
+    case CurveKind::BSplineUniform: return "B样条·均匀";
+    default: return "Bezier";
+    }
+}
+
+const char* PaintController::curveKindShort(CurveKind k) {
+    switch (k) {
+    case CurveKind::BSplineClamped: return "固支";
+    case CurveKind::BSplineUniform: return "均匀";
+    default: return "Bezier";
+    }
+}
+
+std::vector<FPoint> PaintController::sampleCurveKind(CurveKind kind,
+                                                     const std::vector<FPoint>& pts,
+                                                     int degree, int segments) {
+    if (kind == CurveKind::Bezier) {
+        return curves::sampleBezier(pts, segments);
+    }
+    return curves::sampleBSpline(pts, degree, segments, kind == CurveKind::BSplineClamped);
+}
+
 std::vector<FPoint> PaintController::curveSamples(const Shape& s) const {
-    return s.bspline ? curves::sampleBSpline(s.curve, s.curveDeg, kCurveSegments)
-                     : curves::sampleBezier(s.curve, kCurveSegments);
+    return sampleCurveKind(s.curveKind, s.curve, s.curveDeg, kCurveSegments);
 }
 
 // 曲线模式下可抓取的控制点（从上层往下找）。
@@ -2327,9 +2351,10 @@ const std::string& PaintController::title() const {
         }
         break;
     case Mode::Curve:
-        t += curveBSpline_ ? " B样条" : " Bezier";
+        t += " ";
+        t += curveKindName(curveKind_);
         t += "（B 切换）| 左键连点控制点，右键结束；点住已提交曲线的控制点拖拽调整";
-        if (curveBSpline_) {
+        if (curveKind_ == CurveKind::BSplineClamped) {
             // 4 点 + 3 次 clamped B 样条与三次 Bezier 基函数等价，提示用户加第 5 点。
             int ctrlCount = static_cast<int>(pendingCurve_.size());
             if (ctrlCount == 0) {
@@ -2343,6 +2368,8 @@ const std::string& PaintController::title() const {
             if (ctrlCount == 4) {
                 t += " | 4 点 B 样条与三次 Bezier 等价，加第 5 点才不同";
             }
+        } else if (curveKind_ == CurveKind::BSplineUniform) {
+            t += " | 均匀节点：曲线不过首末控制点";
         }
         if (!pendingCurve_.empty()) {
             t += " | 当前 ";

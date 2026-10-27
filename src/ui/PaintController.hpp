@@ -58,6 +58,9 @@ private:
     enum class Mode { Line = 0, Circle = 1, Arc = 2, Polygon = 3, SeedFill = 4, Clip = 5,
                       Transform = 6, Curve = 7 };
 
+    // 曲线类型：Bezier / 固支 B 样条（过首末点）/ 均匀 B 样条（不过首末点）。
+    enum class CurveKind { Bezier = 0, BSplineClamped = 1, BSplineUniform = 2 };
+
     // 已完成、可重放的参数化图形。
     struct Shape {
         Mode mode = Mode::Line;
@@ -71,7 +74,7 @@ private:
         std::vector<IPoint> polygon;
         bool filled = true;
         std::vector<FPoint> curve;
-        bool bspline = false;        // false=Bezier true=B 样条
+        CurveKind curveKind = CurveKind::Bezier;
         int curveDeg = 3;
         raster::LineStyle style;
         Color color = Color::White();
@@ -163,6 +166,11 @@ private:
 
     // ---- 曲线 ----
     void commitCurve();
+    static const char* curveKindName(CurveKind k);      // 标题用全名
+    static const char* curveKindShort(CurveKind k);     // 任务栏用短名
+    // 按类型采样（segments 段）：Bezier / 固支 B 样条 / 均匀 B 样条。
+    static std::vector<FPoint> sampleCurveKind(CurveKind kind, const std::vector<FPoint>& pts,
+                                               int degree, int segments);
     std::vector<FPoint> curveSamples(const Shape& s) const; // 采样折线（渲染/命中共用）
     std::pair<int, int> pickCurveCtrl(IPoint p) const;
     void drawCurveHandles(FrameBuffer& fb) const;           // 控制多边形 + 手柄
@@ -197,7 +205,7 @@ private:
 
     // 曲线状态
     std::vector<IPoint> pendingCurve_; // 连点中的控制点（左键加点，右键提交）
-    bool curveBSpline_ = false;        // 新曲线类型：false=Bezier true=B 样条（B 键切换）
+    CurveKind curveKind_ = CurveKind::Bezier; // 新曲线类型（B 键三态循环）
     bool curveDrag_ = false;           // 拖拽已提交曲线的控制点进行中
     int dragShapeIdx_ = -1;            // 被拖拽控制点所属图形下标
     int dragCtrlIdx_ = -1;             // 被拖拽的控制点下标

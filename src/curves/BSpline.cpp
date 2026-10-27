@@ -1,4 +1,4 @@
-// BSpline.cpp — clamped 节点矢量、Cox-de Boor 基函数与均匀采样。
+// BSpline.cpp — clamped / 均匀节点矢量、Cox-de Boor 基函数与均匀采样。
 #include "curves/BSpline.hpp"
 
 #include <algorithm>
@@ -17,6 +17,19 @@ std::vector<float> clampedKnots(int ctrlCount, int degree) {
     for (int k = 1; k <= interior; ++k) {
         knots[static_cast<std::size_t>(p + k)] =
             static_cast<float>(k) / static_cast<float>(interior + 1);
+    }
+    return knots;
+}
+
+std::vector<float> uniformKnots(int ctrlCount, int degree) {
+    // 均匀节点：u_i = (i - p) / (控制点数 - p)，使定义域 [u_p, u_{n+1}] 映射到 [0,1]。
+    const int p = std::max(0, degree);
+    const int m = ctrlCount + p; // 最后一个节点下标
+    const int denom = std::max(1, ctrlCount - p);
+    std::vector<float> knots(static_cast<std::size_t>(m) + 1, 0.0f);
+    for (int i = 0; i <= m; ++i) {
+        knots[static_cast<std::size_t>(i)] =
+            static_cast<float>(i - p) / static_cast<float>(denom);
     }
     return knots;
 }
@@ -48,7 +61,7 @@ float bsplineBasis(int i, int p, float u, const std::vector<float>& knots) {
 }
 
 std::vector<FPoint> sampleBSpline(const std::vector<FPoint>& controlPoints, int degree,
-                                  int segments) {
+                                  int segments, bool clamped) {
     std::vector<FPoint> samples;
     if (controlPoints.empty()) {
         return samples;
@@ -62,11 +75,16 @@ std::vector<FPoint> sampleBSpline(const std::vector<FPoint>& controlPoints, int 
     if (p == 0) {
         return controlPoints;
     }
-    const std::vector<float> knots =
-        clampedKnots(static_cast<int>(controlPoints.size()), p);
+    const int ctrlCount = static_cast<int>(controlPoints.size());
+    const std::vector<float> knots = clamped ? clampedKnots(ctrlCount, p)
+                                             : uniformKnots(ctrlCount, p);
     samples.reserve(static_cast<std::size_t>(segments) + 1);
     for (int k = 0; k <= segments; ++k) {
-        const float u = static_cast<float>(k) / static_cast<float>(segments);
+        float u = static_cast<float>(k) / static_cast<float>(segments);
+        // 均匀节点在 u=1 处会让两个跨度同时命中半开区间，取左极限；clamped 用精确 1。
+        if (!clamped && k == segments) {
+            u = 1.0f - 1e-6f;
+        }
         FPoint pt{0.0f, 0.0f};
         for (std::size_t i = 0; i < controlPoints.size(); ++i) {
             const float w = bsplineBasis(static_cast<int>(i), p, u, knots);

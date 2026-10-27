@@ -1062,6 +1062,24 @@ int runAlgorithmSelfChecks() {
             }
         }
         expect(hull5, "bspline: 曲线在控制点凸包（包围盒）内");
+
+        // 均匀节点（非固支）：4 点三次 → 起点 (P0+4P1+P2)/6、终点 (P1+4P2+P3)/6
+        const std::vector<FPoint> uni = sampleBSpline(cps, 3, 64, false);
+        expect(nearF(uni.front(), 500.0f / 6.0f, 100.0f / 6.0f, 1e-3f),
+               "bspline: 均匀节点起点 = (P0+4P1+P2)/6");
+        expect(nearF(uni.back(), 500.0f / 6.0f, 500.0f / 6.0f, 1e-3f),
+               "bspline: 均匀节点终点 = (P1+4P2+P3)/6");
+        const float dStart = std::fabs(uni.front().x - cps.front().x) +
+                             std::fabs(uni.front().y - cps.front().y);
+        expect(dStart > 1.0f, "bspline: 均匀节点不过首控制点");
+        // 均匀节点下 4 点与 Bezier 必须不同（这是该选项存在的意义）
+        bool differs = false;
+        for (std::size_t k = 0; k < uni.size() && !differs; ++k) {
+            if (!nearF(uni[k], bz[k].x, bz[k].y, 1e-2f)) {
+                differs = true;
+            }
+        }
+        expect(differs, "bspline: 均匀节点与 Bezier 明显不同");
     }
 
     // ================= 实验四：曲线交互（连点输入 + 控制点拖拽调整） =================
@@ -1129,6 +1147,46 @@ int runAlgorithmSelfChecks() {
         ctrl.onMouseMove({780, 580});
         ctrl.onMouseButton(0, GLFW_RELEASE);
         expect(ctrl.title().find("选中:1") != std::string::npos, "ui4: 框选可选中曲线");
+    }
+
+    // ================= 实验四补充：均匀节点（非固支）B 样条 =================
+    {
+        PaintController ctrl;
+        FrameBuffer canvas(kWidth, kHeight);
+        ctrl.onKey(GLFW_KEY_8, GLFW_PRESS);
+        ctrl.onKey(GLFW_KEY_B, GLFW_PRESS); // Bezier → 固支
+        ctrl.onKey(GLFW_KEY_B, GLFW_PRESS); // 固支 → 均匀
+        expect(ctrl.title().find("均匀") != std::string::npos,
+               "ui4b: B 键三态循环到均匀节点");
+        bool labelOk = false;
+        for (const auto& b : ctrl.toolbarButtons()) {
+            if (b.label == "B 类型:均匀") {
+                labelOk = true;
+            }
+        }
+        expect(labelOk, "ui4b: 任务栏标签显示均匀");
+
+        // 4 点：起点 (P0+4P1+P2)/6 = (400,150)，终点 (P1+4P2+P3)/6 = (400,350)
+        const IPoint ups[4] = {{150, 100}, {450, 100}, {450, 400}, {150, 400}};
+        for (const auto& pt : ups) {
+            ctrl.onMouseMove(pt);
+            ctrl.onMouseButton(0, GLFW_PRESS);
+            ctrl.onMouseButton(0, GLFW_RELEASE);
+        }
+        ctrl.onMouseMove({760, 560});
+        ctrl.onMouseButton(1, GLFW_PRESS); // 右键提交
+        ctrl.onKey(GLFW_KEY_1, GLFW_PRESS); // 离开曲线模式：控制点手柄会盖住断言点
+        ctrl.render(canvas);
+        expect(canvas.pixel(400, 150) == Color::White(),
+               "ui4b: 均匀节点起点 = (P0+4P1+P2)/6");
+        expect(canvas.pixel(400, 350) == Color::White(),
+               "ui4b: 均匀节点终点 = (P1+4P2+P3)/6");
+        expect(canvas.pixel(150, 100) == Color::Black(), "ui4b: 均匀节点不过首控制点");
+
+        ctrl.onKey(GLFW_KEY_8, GLFW_PRESS); // 回到曲线模式
+        ctrl.onKey(GLFW_KEY_B, GLFW_PRESS); // uniform → Bezier
+        expect(ctrl.title().find("Bezier") != std::string::npos,
+               "ui4b: 第三次 B 回到 Bezier");
     }
 
     // ================= 自绘任务栏（按钮点击 = 原按键操作） =================
@@ -1255,7 +1313,7 @@ int runAlgorithmSelfChecks() {
             ctrl.onMouseButton(0, GLFW_RELEASE);
         }
         ctrl.onMouseButton(1, GLFW_PRESS);
-        expect(clickBtn("B 样条:关"), "tb: 找到样条切换按钮");
+        expect(clickBtn("B 类型:Bezier"), "tb: 找到样条切换按钮");
         expect(ctrl.title().find("B样条") != std::string::npos, "curve: B 键切到 B 样条");
     }
 
