@@ -134,7 +134,6 @@ private:
 
     // ---- 画板式选择编辑：外接矩形 + 控制柄 ----
     // 控制柄：线段端点柄（仅单选线段），或外接矩形的 8 向柄
-    // （含圆/弧时只给 4 角柄 = 等比缩放）
     enum class SelHandle { None = 0, EndA, EndB, NW, N, NE, E, SE, S, SW, W };
     raster::Rect shapeBounds(const Shape& s) const;
     raster::Rect selectionBounds() const;

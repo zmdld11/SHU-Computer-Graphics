@@ -8,7 +8,7 @@
 
 namespace cg {
 
-// 软件光栅化的底座：所有手写算法最终都落到 putPixel。
+// 软件光栅化的底座，用putPixel实现像素上传
 class FrameBuffer {
 public:
     FrameBuffer(int width, int height);
