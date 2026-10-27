@@ -495,9 +495,18 @@ void PaintController::drawPreview(FrameBuffer& fb) const {
         if (bandSelect_) { // 框选橡皮筋（品红虚线）
             drawRectOutline(fb, rectFrom(bandStart_, curr_), Color::Magenta(), {0xF0F0u, 1});
         }
+        if (rotDrag_) { // 旋转引导：参考点→光标虚线 + 角度读数
+            const IPoint pivot = roundPt(rotPivot_);
+            raster::drawLine(fb, pivot, curr_, Color::Cyan(), {0xF0F0u, 1});
+            raster::drawCircle(fb, pivot, 6, Color::Cyan(), {});
+            const std::string deg =
+                std::to_string(static_cast<int>(std::lround(rotDeg_))) + "°";
+            text::drawText(fb, curr_.x + 12, curr_.y - text::height() - 6, deg.c_str(),
+                           Color::Cyan());
+        }
         drawSelection(fb);
         if (!selected_.empty()) {
-            drawCross(fb, roundPt(activeRefPoint()), Color::Cyan(), 6);
+            drawCross(fb, roundPt(rotDrag_ ? rotPivot_ : activeRefPoint()), Color::Cyan(), 6);
         }
         if (refPick_) {
             drawCross(fb, curr_, Color::Yellow(), 6);
@@ -1079,6 +1088,53 @@ void PaintController::beginXformDrag(IPoint anchor) {
     snapshotAttachedSeeds();
 }
 
+// 右键拖拽旋转：参考点在按下时锁定（默认重心，G 指定后为用户点），起始角同刻锁定。
+void PaintController::beginRotateDrag() {
+    beginGesture();
+    rotDrag_ = true;
+    rotArmed_ = false;
+    rotDeg_ = 0.0f;
+    rotPivot_ = activeRefPoint();
+    const float dx = static_cast<float>(curr_.x) - rotPivot_.x;
+    const float dy = static_cast<float>(curr_.y) - rotPivot_.y;
+    if (dx * dx + dy * dy >= 36.0f) { // 按下点离参考点太近时不锁角，等光标移开后补锁
+        rotStartAngle_ = std::atan2(dy, dx);
+        rotArmed_ = true;
+    }
+    snapshotSelection();
+    snapshotAttachedSeeds();
+}
+
+// 旋转角 = 当前极角 - 按下极角；每帧从快照重算，避免整数端点累积漂移。
+void PaintController::applyRotateDrag(IPoint pos) {
+    const float dx = static_cast<float>(pos.x) - rotPivot_.x;
+    const float dy = static_cast<float>(pos.y) - rotPivot_.y;
+    if (!rotArmed_) {
+        if (dx * dx + dy * dy < 36.0f) { // 6px 内极角不稳定，先不锁起始角
+            return;
+        }
+        rotStartAngle_ = std::atan2(dy, dx);
+        rotArmed_ = true;
+    }
+    ensureGestureUndo();
+    float deg = (std::atan2(dy, dx) - rotStartAngle_) * (180.0f / kPiF);
+    if (shiftHeld_) {
+        deg = std::round(deg / 15.0f) * 15.0f;
+    }
+    rotDeg_ = deg;
+    const geom::Mat3 m = geom::rotateAbout(rotPivot_.x, rotPivot_.y, deg * kPiF / 180.0f);
+    for (std::size_t k = 0; k < selected_.size() && k < selSnapshot_.size(); ++k) {
+        const int idx = selected_[k];
+        if (idx < 0 || idx >= static_cast<int>(shapes_.size())) {
+            continue;
+        }
+        shapes_[idx] = selSnapshot_[k];
+        applyToShape(shapes_[idx], m, deg, 1.0f);
+    }
+    transformAttachedSeedsForSelection(m, true);
+    markDirty();
+}
+
 // 入列表并分配稳定 id（种子填充用 parentId 指向所属图形）。
 void PaintController::pushUndo() {
     if (undoStack_.size() >= 64) {
@@ -1100,6 +1156,9 @@ void PaintController::undo() {
     selected_.clear();
     handleDrag_ = false;
     xformDrag_ = false;
+    rotDrag_ = false;
+    rotArmed_ = false;
+    rotDeg_ = 0.0f;
     curveDrag_ = false;
     dockStage_ = 0;
     pendingPolygon_.clear();
@@ -1817,6 +1876,9 @@ void PaintController::cancelInProgress() {
     clipRectEdit_ = false;
     clipPolyEdit_ = false;
     xformDrag_ = false;
+    rotDrag_ = false;
+    rotArmed_ = false;
+    rotDeg_ = 0.0f;
     bandSelect_ = false;
     refPick_ = false;
     dockStage_ = 0;
@@ -1868,12 +1930,25 @@ void PaintController::onMouseButton(int button, int action, int mods) {
         return;
     }
 
-    if (button == 1) { // 右键：闭合多边形/曲线输入 / 取消当前操作
+    if (button == 1) { // 右键：闭合输入 / 拖拽旋转 / 取消当前操作
+        if (rotDrag_) {
+            if (!press) { // 释放：结束旋转，图形保留当前姿态
+                rotDrag_ = false;
+                rotArmed_ = false;
+                rotDeg_ = 0.0f;
+                markDirty();
+            }
+            return;
+        }
         if (press) {
             if (mode_ == Mode::Polygon && !pendingPolygon_.empty()) {
                 closePolygon();
             } else if (mode_ == Mode::Curve && !pendingCurve_.empty()) {
                 commitCurve();
+            } else if (mode_ == Mode::Transform && !selected_.empty() && !refPick_ &&
+                       dockStage_ == 0 && curr_.y >= toolbarHeight()) {
+                // 有选中且不在对接/拾取参考点流程中：右键按下进入旋转，拖动即转动。
+                beginRotateDrag();
             } else {
                 cancelInProgress();
             }
@@ -2151,6 +2226,10 @@ void PaintController::onMouseMove(IPoint pos, int mods) {
     if (handleDrag_ && mode_ == Mode::Transform) {
         applyHandleDrag(pos);
     }
+    // 右键拖拽旋转：绕参考点任意角度。
+    if (rotDrag_ && mode_ == Mode::Transform) {
+        applyRotateDrag(pos);
+    }
     // 拖拽平移：从快照整体平移（零累积），Shift 吸附 45°。
     if (xformDrag_ && mode_ == Mode::Transform && !selected_.empty()) {
         ensureGestureUndo();
@@ -2236,7 +2315,7 @@ const std::string& PaintController::title() const {
         t += std::to_string(selected_.size());
         t += " 参考点:";
         t += refManual_ ? "指定" : "重心";
-        t += " | 左键选(Shift加选) 空白拖拽框选 平移(Shift=45° Ctrl=10px) 柄缩放(Shift=等比 Ctrl=中心) 线段端点 Ctrl=步进 方向键微移 Del删除 +−缩放 R/T旋转 G参考点 J对接";
+        t += " | 左键选(Shift加选) 空白拖拽框选 平移(Shift=45° Ctrl=10px) 右键拖拽=任意角度旋转(Shift=15°) 柄缩放(Shift=等比 Ctrl=中心) 线段端点 Ctrl=步进 方向键微移 Del删除 +−缩放 R/T旋转 G参考点 J对接";
         if (refPick_) {
             t += " | 点击画布指定参考点";
         }

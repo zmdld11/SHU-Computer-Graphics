@@ -40,7 +40,9 @@ int runAlgorithmSelfChecks() {
     using namespace cg::raster;
 
     int fails = 0;
+    int checks = 0;
     auto expect = [&](bool ok, const char* name) {
+        ++checks;
         if (!ok) {
             std::cerr << "[smoke] FAIL: " << name << std::endl;
             ++fails;
@@ -508,6 +510,70 @@ int runAlgorithmSelfChecks() {
         expect(canvas.pixel(200, 100) == Color(255, 150, 40) &&
                    canvas.pixel(380, 200) == Color(255, 150, 40),
                "ui3: Shift 多选后拖拽平移两条线一起移动（橙色高亮）");
+    }
+
+    // ================= 实验三补充：右键拖拽任意角度旋转 =================
+    {
+        PaintController ctrl;
+        FrameBuffer canvas(kWidth, kHeight);
+
+        // 水平线 (300,300)→(400,300)，重心 (350,300) 是默认旋转中心
+        ctrl.onKey(GLFW_KEY_1, GLFW_PRESS);
+        ctrl.onMouseMove({300, 300});
+        ctrl.onMouseButton(0, GLFW_PRESS);
+        ctrl.onMouseMove({400, 300});
+        ctrl.onMouseButton(0, GLFW_RELEASE);
+        ctrl.onKey(GLFW_KEY_7, GLFW_PRESS);
+        ctrl.onMouseMove({350, 300});
+        ctrl.onMouseButton(0, GLFW_PRESS);
+        ctrl.onMouseButton(0, GLFW_RELEASE);
+
+        // 右键在重心正下方（90°）按下，拖到正左方（180°）→ 顺时针 90°，线变竖线
+        ctrl.onMouseMove({350, 400});
+        ctrl.onMouseButton(1, GLFW_PRESS);
+        ctrl.onMouseMove({250, 300});
+        ctrl.onMouseButton(1, GLFW_RELEASE);
+        ctrl.onMouseMove({700, 550}); // 光标挪开，避免十字盖住断言点
+        ctrl.render(canvas);
+        const Color HI(255, 150, 40);
+        expect(canvas.pixel(350, 250) == HI && canvas.pixel(350, 350) == HI,
+               "ui3b: 右键拖拽 90° 后线段竖直（端点绕重心准确旋转）");
+        expect(canvas.pixel(400, 300) == Color::Black() &&
+                   canvas.pixel(300, 300) == Color::Black(),
+               "ui3b: 原水平位置已清空");
+
+        // 一次旋转拖拽只占一步撤销
+        ctrl.onKey(GLFW_KEY_Z, GLFW_PRESS, GLFW_MOD_CONTROL);
+        ctrl.onMouseMove({700, 560});
+        ctrl.render(canvas);
+        expect(canvas.pixel(400, 300) == Color::White() && canvas.pixel(350, 250) == Color::Black(),
+               "ui3b: 一次旋转拖拽 = 一步撤销，回滚为水平线");
+
+        // Shift 吸附 15°：拖 20° 应落在 15°（端点 400,300 → 398,313）
+        ctrl.onMouseMove({350, 300});
+        ctrl.onMouseButton(0, GLFW_PRESS);
+        ctrl.onMouseButton(0, GLFW_RELEASE);
+        ctrl.onMouseMove({350, 400});
+        ctrl.onMouseButton(1, GLFW_PRESS);
+        ctrl.onMouseMove({329, 356}, GLFW_MOD_SHIFT); // 极角 110° - 90° = 20°
+        ctrl.onMouseButton(1, GLFW_RELEASE, GLFW_MOD_SHIFT);
+        ctrl.onMouseMove({700, 550});
+        ctrl.render(canvas);
+        expect(canvas.pixel(398, 313) == HI, "ui3b: Shift 吸附，20° 拖拽落到 15° 端点");
+        expect(canvas.pixel(400, 300) == Color::Black(), "ui3b: 吸附后原端点不再有线");
+
+        // 无选中时右键仍是取消：退出变换模式再确认标题/状态不被旋转流程占用
+        ctrl.onMouseMove({700, 560});
+        ctrl.onMouseButton(0, GLFW_PRESS);
+        ctrl.onMouseButton(0, GLFW_RELEASE); // 点空白清除选中
+        ctrl.onMouseMove({700, 400});
+        ctrl.onMouseButton(1, GLFW_PRESS);
+        ctrl.onMouseMove({600, 400}); // 无选中：右键拖拽不应转动任何图形
+        ctrl.onMouseButton(1, GLFW_RELEASE);
+        ctrl.onMouseMove({700, 550});
+        ctrl.render(canvas);
+        expect(canvas.pixel(398, 313) == Color::White(),
+               "ui3b: 无选中时右键拖拽不误旋转（图形保持原位）");
     }
 
     // ================= 实验三（挑战题）：对接拼接 =================
@@ -1518,6 +1584,7 @@ int runAlgorithmSelfChecks() {
                "seed-bind: 多边形缩小后旧区域未翻色");
     }
 
+    std::cout << "smoke: " << checks << " checks, " << fails << " failed" << std::endl;
     return fails;
 }
 

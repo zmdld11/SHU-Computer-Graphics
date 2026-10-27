@@ -117,6 +117,8 @@ private:
     FPoint activeRefPoint() const;                 // 未指定时回退重心
     void transformSelected(const geom::Mat3& m, float rotDeg, float scaleF);
     void beginXformDrag(IPoint anchor);
+    void beginRotateDrag();              // 右键拖拽旋转：记录参考点与起始极角
+    void applyRotateDrag(IPoint pos);    // 从拖拽起点快照重算旋转姿态
     void snapshotSelection();           // 选中参数快照（防整数漂移）
     static void applyToShape(Shape& s, const geom::Mat3& m, float rotDeg, float scaleF);
     // ---- 种子填充绑定 ----
@@ -212,6 +214,11 @@ private:
     std::vector<int> selected_;  // 选中图形的下标（shapes_ 内）
     bool xformDrag_ = false;     // 拖拽平移进行中
     IPoint lastDrag_{};          // 上一次增量平移的参考位置
+    bool rotDrag_ = false;       // 右键拖拽旋转进行中
+    FPoint rotPivot_{};          // 旋转参考点：拖拽开始时锁定，避免中途重心漂移
+    float rotStartAngle_ = 0.0f; // 按下时的极角（弧度，屏幕系顺时针为正）
+    bool rotArmed_ = false;      // 光标离参考点足够远后才锁定起始角（防近心抖动）
+    float rotDeg_ = 0.0f;        // 当前旋转角度（度，仅用于画布读数）
     bool bandSelect_ = false;    // 框选拖拽进行中（空白处按下）
     IPoint bandStart_{};         // 框选起点
     bool refManual_ = false;     // 参考点：false=重心（默认） true=手动指定
