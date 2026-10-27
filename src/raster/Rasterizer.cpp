@@ -88,6 +88,7 @@ std::vector<CirclePixel> circlePoints(IPoint center, int radius, bool ordered) {
 
 } // namespace
 
+// 画直线
 void drawLine(FrameBuffer& fb, IPoint a, IPoint b, const Color& color, const LineStyle& style) {
     // 包围盒完全在画布外时直接返回。
     if (std::max(a.x, b.x) < 0 || std::min(a.x, b.x) >= fb.width() ||
@@ -132,6 +133,7 @@ void drawLine(FrameBuffer& fb, IPoint a, IPoint b, const Color& color, const Lin
     }
 }
 
+// 画圆
 void drawCircle(FrameBuffer& fb, IPoint center, int radius, const Color& color,
                 const LineStyle& style) {
     if (radius < 0) {
@@ -148,6 +150,7 @@ void drawCircle(FrameBuffer& fb, IPoint center, int radius, const Color& color,
     }
 }
 
+// 画圆弧
 void drawArc(FrameBuffer& fb, IPoint center, int radius, float startDeg, float endDeg,
              const Color& color, const LineStyle& style) {
     if (radius <= 0) {
