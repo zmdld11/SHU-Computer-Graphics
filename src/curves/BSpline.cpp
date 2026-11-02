@@ -22,7 +22,7 @@ std::vector<float> clampedKnots(int ctrlCount, int degree) {
 }
 
 std::vector<float> uniformKnots(int ctrlCount, int degree) {
-    // 均匀节点：u_i = (i - p) / (控制点数 - p)，使定义域 [u_p, u_{n+1}] 映射到 [0,1]。
+    // 均匀节点：ui = (i - p) / (控制点数 - p)，使定义域 [up, u{n+1}] 映射到 [0,1]。
     const int p = std::max(0, degree);
     const int m = ctrlCount + p; // 最后一个节点下标
     const int denom = std::max(1, ctrlCount - p);
