@@ -5,6 +5,7 @@
 
 #include "core/FrameBuffer.hpp"
 #include "core/ImageIO.hpp"
+#include "game/FarmGame.hpp"
 #include "game/FarmLayout.hpp"
 #include "game/FarmRender.hpp"
 #include "game/FarmWorld.hpp"
@@ -342,6 +343,55 @@ int runFarmChecks() {
            "cabin: 出门落在屋前格");
     world.reset();
     world.setViewport(800, 600);
+
+    // ---- 视口适配与分辨率配置（#80）----
+    // 窗口 ≤ 地图：1:1 平移镜头；窗口 > 地图：等比放大充满窗口（相机窗上限为整图）。
+    {
+        const ViewportFit f1 = fitViewport(800, 600);
+        expect(f1.scale == 1.0f && f1.viewW == 800 && f1.viewH == 600,
+               "view: 默认窗口 1:1 平移镜头");
+        const ViewportFit f2 = fitViewport(1024, 768);
+        expect(f2.scale == 1.0f && f2.viewW == 1024 && f2.viewH == 768,
+               "view: 小于地图仍 1:1");
+        const ViewportFit f3 = fitViewport(1920, 1080);
+        expect(f3.scale == 1.25f, "view: 16:9 放大倍数取宽高较大者");
+        expect(f3.viewW == kWorldW && f3.viewH == 864, "view: 16:9 相机窗铺满宽度");
+        const ViewportFit f4 = fitViewport(2048, 1536);
+        expect(f4.scale == 4.0f / 3.0f && f4.viewW == kWorldW && f4.viewH == kWorldH,
+               "view: 4:3 恰好整图充满窗口");
+        const ViewportFit f5 = fitViewport(768, 1152);
+        expect(f5.scale == 1.0f && f5.viewW == 768 && f5.viewH == kWorldH,
+               "view: 竖窗口整高 1:1 平移");
+
+        // blitScaledFrom：2x2 放大到 4x4 每源像素扩成 2x2；4x4 缩到 2x2 取左上采样
+        FrameBuffer src(2, 2);
+        src.putPixel(0, 0, Color(255, 0, 0));
+        src.putPixel(1, 0, Color(0, 255, 0));
+        src.putPixel(0, 1, Color(0, 0, 255));
+        src.putPixel(1, 1, Color(255, 255, 0));
+        FrameBuffer up(4, 4);
+        up.blitScaledFrom(src);
+        expect(up.pixel(0, 0) == Color(255, 0, 0) && up.pixel(3, 3) == Color(255, 255, 0),
+               "view: 放大 blit 角点颜色不变");
+        expect(up.pixel(2, 2) == src.pixel(1, 1), "view: 放大 blit 采样正确");
+        FrameBuffer down(2, 2);
+        down.blitScaledFrom(up);
+        expect(down.pixel(0, 0) == Color(255, 0, 0) && down.pixel(1, 1) == Color(255, 255, 0),
+               "view: 缩小 blit 取左上采样");
+
+        int w = 0;
+        int h = 0;
+        expect(parseResolutionText("1280\n720", w, h) && w == 1280 && h == 720,
+               "cfg: 两行数字正常解析");
+        expect(parseResolutionText("1024 768\r\n", w, h) && w == 1024 && h == 768,
+               "cfg: 同行空格分隔也可");
+        expect(!parseResolutionText("800\n", w, h), "cfg: 只有一个数判失败");
+        expect(!parseResolutionText("auto\nfull\n", w, h), "cfg: 无数字判失败");
+        const FarmResolution c1 = clampResolution(640, 480, 1920, 1080);
+        expect(c1.width == 800 && c1.height == 600, "cfg: 低于 800x600 回落到下限");
+        const FarmResolution c2 = clampResolution(5000, 3000, 1920, 1080);
+        expect(c2.width == 1920 && c2.height == 1080, "cfg: 超过屏幕夹到屏幕大小");
+    }
 
     std::cout << (fails == 0 ? "farm checks passed" : "farm checks FAILED") << std::endl;
     return fails;

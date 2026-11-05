@@ -11,31 +11,97 @@
 #include "ui/Window.hpp"
 
 #include <GLFW/glfw3.h>
+#include <algorithm>
 #include <chrono>
 #include <cstddef>
+#include <fstream>
 #include <iostream>
+#include <sstream>
+#include <string>
 #include <vector>
 
 namespace cg::game {
-namespace {
 
-FPoint screenToWorld(double mx, double my, const FarmWorld& world) {
-    return {static_cast<float>(mx) + world.camera().x,
-            static_cast<float>(my) + world.camera().y};
+// 从文本按顺序取前两个正整数当宽/高：容忍空行/CRLF/多余文字，凑够两个数就成功。
+bool parseResolutionText(const std::string& text, int& width, int& height) {
+    int values[2] = {0, 0};
+    int count = 0;
+    bool inNumber = false;
+    for (char c : text) {
+        if (c >= '0' && c <= '9') {
+            if (!inNumber) {
+                if (count >= 2) {
+                    break; // 前两个数已凑齐，后面的数字不再关心
+                }
+                inNumber = true;
+                ++count;
+            }
+            values[count - 1] = values[count - 1] * 10 + (c - '0');
+            if (values[count - 1] > 999999) { // 防御超长数字溢出
+                return false;
+            }
+        } else {
+            inNumber = false;
+        }
+    }
+    if (count < 2 || values[0] <= 0 || values[1] <= 0) {
+        return false;
+    }
+    width = values[0];
+    height = values[1];
+    return true;
 }
 
-} // namespace
+// 夹到 [800×600, maxW×maxH]：低于下限 HUD 放不下，高于上限会超出屏幕。
+FarmResolution clampResolution(int width, int height, int maxW, int maxH) {
+    FarmResolution r;
+    r.width = std::clamp(width, 800, std::max(800, maxW));
+    r.height = std::clamp(height, 600, std::max(600, maxH));
+    return r;
+}
+
+FarmResolution loadResolutionFile() {
+    FarmResolution r;
+    std::ifstream in("resolution.txt");
+    if (!in) {
+        std::cout << "[game] 未找到 resolution.txt，使用默认 800x600" << std::endl;
+        return r;
+    }
+    std::stringstream buffer;
+    buffer << in.rdbuf();
+    int w = 0;
+    int h = 0;
+    if (!parseResolutionText(buffer.str(), w, h)) {
+        std::cout << "[game] resolution.txt 内容无效，使用默认 800x600" << std::endl;
+        return r;
+    }
+    // 上限夹到主显示器当前分辨率，避免窗口开得比屏幕还大
+    int maxW = 3840;
+    int maxH = 2160;
+    if (glfwInit() == GLFW_TRUE) {
+        if (const GLFWvidmode* mode = glfwGetVideoMode(glfwGetPrimaryMonitor())) {
+            maxW = mode->width;
+            maxH = mode->height;
+        }
+    }
+    r = clampResolution(w, h, maxW, maxH);
+    std::cout << "[game] resolution.txt: " << r.width << "x" << r.height << std::endl;
+    return r;
+}
 
 int runFarmGame() {
+    const FarmResolution res = loadResolutionFile();
+
     FarmWorld world;
-    world.setViewport(800, 600);
+    const ViewportFit fit0 = fitViewport(res.width, res.height);
+    world.setViewport(fit0.viewW, fit0.viewH);
 
     std::cout << "[game] 正在烘焙地图（2x 超采样）..." << std::endl;
     FarmRender render;
     render.build(world);
     std::cout << "[game] 地图就绪，左键点地面移动，右键取消，1/2/3 选种子，R 重开" << std::endl;
 
-    Window window(800, 600, "胖龙农场 - 左键移动", false);
+    Window window(res.width, res.height, "胖龙农场 - 左键移动", false);
     if (!window.valid()) {
         return 1;
     }
@@ -46,7 +112,17 @@ int runFarmGame() {
     if (!canvas.valid() || fb.width() <= 0 || fb.height() <= 0) {
         return 1;
     }
-    world.setViewport(fb.width(), fb.height());
+
+    // 窗口 > 地图时先把相机窗渲到 camFb，再整幅放大铺满窗口；scale==1 保持直渲零开销
+    ViewportFit fit = fitViewport(fb.width(), fb.height());
+    FrameBuffer camFb(fit.viewW, fit.viewH);
+    world.setViewport(fit.viewW, fit.viewH);
+
+    auto applyViewport = [&](int w, int h) {
+        fit = fitViewport(w, h);
+        camFb.resize(fit.viewW, fit.viewH);
+        world.setViewport(fit.viewW, fit.viewH);
+    };
 
     window.setOnResize([&](int w, int h) {
         if (w <= 0 || h <= 0) {
@@ -54,8 +130,18 @@ int runFarmGame() {
         }
         fb.resize(w, h);
         canvas.resize(w, h);
-        world.setViewport(w, h);
+        applyViewport(w, h);
     });
+
+    // 窗口像素 → 相机像素：放大时除以倍数，HUD 命中与点击换算共用
+    auto toCam = [&](int mx, int my) {
+        return IPoint{static_cast<int>(mx / fit.scale), static_cast<int>(my / fit.scale)};
+    };
+    auto toWorld = [&](int mx, int my) {
+        const IPoint c = toCam(mx, my);
+        return FPoint{static_cast<float>(c.x) + world.camera().x,
+                      static_cast<float>(c.y) + world.camera().y};
+    };
 
     int mouseX = 0;
     int mouseY = 0;
@@ -79,17 +165,17 @@ int runFarmGame() {
             return;
         }
 
-        const IPoint m{mouseX, mouseY};
-        if (inHud(m, fb.width(), fb.height())) {
+        const IPoint m = toCam(mouseX, mouseY);
+        if (inHud(m, fit.viewW, fit.viewH)) {
             for (int i = 0; i < 3; ++i) {
-                if (hotbarSlotRect(i, fb.width(), fb.height()).inflated(4).contains(m)) {
+                if (hotbarSlotRect(i, fit.viewW, fit.viewH).inflated(4).contains(m)) {
                     world.selectSeed(i);
                     return;
                 }
             }
             return;
         }
-        world.onClick(screenToWorld(mouseX, mouseY, world));
+        world.onClick(toWorld(mouseX, mouseY));
     });
 
     window.setOnKey([&](int key, int action, int) {
@@ -104,7 +190,7 @@ int runFarmGame() {
             world.selectSeed(2);
         } else if (key == GLFW_KEY_R) {
             world.reset();
-            world.setViewport(fb.width(), fb.height());
+            applyViewport(fb.width(), fb.height());
         }
     });
 
@@ -119,14 +205,19 @@ int runFarmGame() {
 
         world.update(dt);
 
-        if (mouseSeen && !inHud({mouseX, mouseY}, fb.width(), fb.height())) {
-            world.onHover(screenToWorld(mouseX, mouseY, world));
+        if (mouseSeen && !inHud(toCam(mouseX, mouseY), fit.viewW, fit.viewH)) {
+            world.onHover(toWorld(mouseX, mouseY));
         } else {
             world.clearHover();
         }
 
         if (fb.width() > 0 && fb.height() > 0) {
-            render.frame(fb, world, true);
+            if (fit.scale > 1.0f) {
+                render.frame(camFb, world, true);
+                fb.blitScaledFrom(camFb);
+            } else {
+                render.frame(fb, world, true);
+            }
             canvas.present(fb);
             window.swapBuffers();
         }

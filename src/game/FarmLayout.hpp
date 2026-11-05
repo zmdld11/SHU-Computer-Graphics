@@ -4,6 +4,7 @@
 #pragma once
 #include "core/Point.hpp"
 
+#include <algorithm>
 #include <cmath>
 
 namespace cg::game {
@@ -13,6 +14,26 @@ constexpr int kCols = 48;
 constexpr int kRows = 36;
 constexpr int kWorldW = kCols * kCell;
 constexpr int kWorldH = kRows * kCell;
+
+// 视口适配：窗口不超过地图时 1:1 平移镜头；超过地图时整图等比放大充满窗口。
+// viewW/viewH 是相机窗（世界坐标，渲染仍按 1:1），scale 是画上窗口的放大倍数。
+struct ViewportFit {
+    int viewW = kWorldW;
+    int viewH = kWorldH;
+    float scale = 1.0f;
+};
+
+inline ViewportFit fitViewport(int fbW, int fbH) {
+    ViewportFit fit;
+    const float rw = static_cast<float>(std::max(1, fbW)) / kWorldW;
+    const float rh = static_cast<float>(std::max(1, fbH)) / kWorldH;
+    fit.scale = std::max(1.0f, std::max(rw, rh));
+    fit.viewW = std::min(kWorldW, static_cast<int>(std::ceil(fbW / fit.scale)));
+    fit.viewH = std::min(kWorldH, static_cast<int>(std::ceil(fbH / fit.scale)));
+    fit.viewW = std::max(1, fit.viewW);
+    fit.viewH = std::max(1, fit.viewH);
+    return fit;
+}
 
 // 可行走范围：四周留 6 格做树林边界，角色不会走到树冠底下。
 constexpr int kWalkMinCol = 6;

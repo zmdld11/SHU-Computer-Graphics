@@ -36,7 +36,7 @@ cmake --build build
 ./build/farm-game                # 直接进入胖龙农场（CLion 选 farm-game 目标即可）
 ./build/cg-engine --game         # 同一游戏的命令行入口（点选移动/种植/钓鱼/昼夜/小屋）
 ./build/cg-engine --game-capture # 无窗口导出背景、分层帧、昼夜四时刻、特效与室内预览
-./build/cg-engine --game-smoke   # 无窗口农场自测（玩法/钓鱼/昼夜/场景切换 73 项）
+./build/cg-engine --game-smoke   # 无窗口农场自测（玩法/钓鱼/昼夜/场景切换/视口适配 103 项）
 ```
 
 > CLion 打开的是 **`cg-labs` 目录**（`CMakeLists.txt` 所在层）。加载后左上角运行配置选
@@ -85,6 +85,10 @@ cmake --build build
 
 地图 1536×1152，窗口 800×600 跟随角色滚动，到世界边缘后镜头停住、角色偏移。静态背景以 2× 超采样烘焙一次，之后每帧只做相机窗口拷贝；胖龙、农田、池塘、土路全部由手写光栅算法和矢量图元绘制，无外部素材。
 
+**窗口自适应**（#80）：窗口不大于地图时按 1:1 平移镜头；超过地图（如最大化）时整图**等比放大充满窗口**，不再挤在左上角。渲染仍按 1:1 画进相机缓存，最后用最近邻整幅缩放铺上窗口，鼠标坐标按倍数反变换，HUD 命中不受影响。
+
+**分辨率自定义**：仓库根目录的 [`resolution.txt`](resolution.txt) 两行数字（上=宽、下=高）指定启动窗口大小；低于 800×600 回落到 800×600，超过主显示器分辨率夹到屏幕大小，文件缺失或内容非法也回落默认。
+
 CLion 里选 **`farm-game`** 目标直接运行（无需参数）；命令行也可用 `./build/farm-game` 或 `./build/cg-engine --game`。
 
 ## 目录结构
@@ -93,6 +97,7 @@ CLion 里选 **`farm-game`** 目标直接运行（无需参数）；命令行也
 SHU-Computer-Graphics/
 ├── AGENTS.md          # 组员 AI 助手工作指引（AI 编程工具自动读取）
 ├── CONTRIBUTING.md    # 协作规范：issue 驱动工作流
+├── resolution.txt     # 农场启动分辨率（两行：宽/高；缺省 800×600）
 ├── docs/              # 实验要求摘要、架构设计（类图与依赖）、OpenGL 显示原理
 ├── src/
 │   ├── core/          # FrameBuffer（putPixel 唯一画点入口）、GLLoader、Canvas 上屏

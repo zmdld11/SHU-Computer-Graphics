@@ -164,4 +164,27 @@ void FrameBuffer::copySpanFrom(const FrameBuffer& src, int y, int x0, int x1) {
                 static_cast<std::size_t>(xb - xa + 1) * sizeof(std::uint32_t));
 }
 
+// 最近邻采样 dst(x,y) = src(x*srcW/dstW, y*srcH/dstH)；列映射预计算一次，行内无除法。
+void FrameBuffer::blitScaledFrom(const FrameBuffer& src) {
+    if (width_ <= 0 || height_ <= 0 || src.width_ <= 0 || src.height_ <= 0) {
+        return;
+    }
+    if (width_ == src.width_ && height_ == src.height_) {
+        copyFrom(src);
+        return;
+    }
+    std::vector<int> xmap(static_cast<std::size_t>(width_));
+    for (int x = 0; x < width_; ++x) {
+        xmap[static_cast<std::size_t>(x)] = x * src.width_ / width_;
+    }
+    for (int y = 0; y < height_; ++y) {
+        const int sy = y * src.height_ / height_;
+        const std::uint32_t* srcRow = src.pixels_.data() + rowOffset(src.width_, sy);
+        std::uint32_t* dstRow = pixels_.data() + rowOffset(width_, y);
+        for (int x = 0; x < width_; ++x) {
+            dstRow[x] = srcRow[xmap[static_cast<std::size_t>(x)]];
+        }
+    }
+}
+
 } // namespace cg
