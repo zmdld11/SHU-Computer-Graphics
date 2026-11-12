@@ -97,7 +97,7 @@ cmake --build build
 **夜间自发光**（#81）：新增加色混合 `blendAddPixel/Span/Rect`（`dst = min(255, dst + src·α)`）。夜里 26 只萤火虫用径向衰减光点呼吸闪烁；水面有一条随太阳/月亮方位横移的**碎光带**——光斑白天在池塘东侧、黄昏滑到西侧，夜里换成月光的冷色倒影。
 
 CLion 里选 **`farm-game`** 目标直接运行（无需参数）；命令行也可用 `./build/farm-game` 或 `./build/cg-engine --game`。
-`./build/cg-engine --dragon-sheet` 输出 `dragon-sheet.ppm`：6 个角色造型 × 站立/走路两种姿态的对照图，切换造型改 `FarmRender.cpp` 里的 `kDragonVariant`（1 奶蛋 / 2 奶龙 / 3 奶鼠 / 4 奶娃 / 5 奶兔 / 6 奶猫）。
+`./build/cg-engine --dragon-sheet` 输出 `dragon-sheet.ppm`：6 个角色造型 × 站立/走路两种姿态的对照图。当前采用 **1 号奶蛋**（蛋形身体 + 头顶嫩芽 + 短手短脚），切换造型改 `FarmRender.cpp` 里的 `kDragonVariant`（1 奶蛋 / 2 奶龙 / 3 奶鼠 / 4 奶娃 / 5 奶兔 / 6 奶猫）。
 
 ## 目录结构
 

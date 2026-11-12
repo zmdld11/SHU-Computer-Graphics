@@ -1125,7 +1125,7 @@ void drawScene(Painter& p, const FarmWorld& world) {
 //   腮红靠外；身体宽扁无脖子、两侧露出来；手脚短粗；
 //   尾巴从身体内部起笔、由粗到细（二次贝塞尔扫出的带状多边形），不悬浮。
 
-constexpr int kDragonVariant = 2; // 1 奶蛋 2 奶龙 3 奶鼠 4 奶娃 5 奶兔 6 奶猫
+constexpr int kDragonVariant = 1; // 1 奶蛋 2 奶龙 3 奶鼠 4 奶娃 5 奶兔 6 奶猫（选定 1）
 
 // 一双大眼睛：眼白 + 大虹膜 + 左上高光 + 右下反光。
 // rim 用头部色的深色版而不是纯黑，边缘才不会像贴了两枚纽扣。
