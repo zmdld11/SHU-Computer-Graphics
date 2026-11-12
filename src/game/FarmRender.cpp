@@ -1271,11 +1271,11 @@ void drawDragonBaby(Painter& p, float x, float y, float f, bool moving, float ph
     p.ellipseOutline(x, y - 54.0f, 24.0f, 19.0f, kDragon, kOutline, 1.8f, 36);
 
     // 口鼻：压在眼睛下方；这个尺寸下鼻孔会看成第二对眼睛，省略
-    p.ellipseOutline(x, y - 39.5f, 8.5f, 5.2f, kCream, kCreamShade, 1.0f, 18);
-    dSmile(p, x, y - 38.6f, f, 4.4f, 2.0f);
+    p.ellipseOutline(x, y - 39.0f, 8.5f, 5.0f, kCream, kCreamShade, 1.0f, 18);
+    dSmile(p, x, y - 38.2f, f, 4.4f, 2.0f);
 
     dEyes(p, x, y - 55.0f, f, 10.5f, 5.4f, 6.2f, rim);
-    dBlush(p, x, y - 42.5f, f, 17.5f);
+    dBlush(p, x, y - 44.0f, f, 16.0f);
 }
 
 // 3 奶鼠：大圆耳 + 圆身 + 细锥尾。
