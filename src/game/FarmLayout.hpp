@@ -298,11 +298,41 @@ inline RectI orderBoardRect(int viewW) {
     return {viewW - 214, 14, 198, 172};
 }
 
+// 顶部中央时间轴：时刻文字 + 24h 轨道 + 可拖拽旋钮。
+// 面板与轨道分开给，渲染和命中测试共用一份几何。
+constexpr int kTimeBarW = 308;
+constexpr int kTimeBarH = 66;
+
+inline RectI timeBarRect(int viewW) {
+    return {viewW / 2 - kTimeBarW / 2, 10, kTimeBarW, kTimeBarH};
+}
+
+// 轨道本体（不含左右留白），拖动与旋钮位置都按这个矩形换算。
+inline RectI timeTrackRect(int viewW) {
+    return {viewW / 2 - 132, 46, 264, 12};
+}
+
+// 轨道上的横坐标 → 0-24 时刻；反过来时刻 → 旋钮圆心 x。
+inline float timeFromTrackX(float x, int viewW) {
+    const RectI t = timeTrackRect(viewW);
+    const float u = (x - static_cast<float>(t.x)) / static_cast<float>(t.w);
+    return std::clamp(u, 0.0f, 0.9999f) * 24.0f;
+}
+
+inline float trackXFromTime(float hour, int viewW) {
+    const RectI t = timeTrackRect(viewW);
+    return static_cast<float>(t.x) +
+           std::clamp(hour / 24.0f, 0.0f, 1.0f) * static_cast<float>(t.w);
+}
+
 inline bool inHud(IPoint p, int viewW, int viewH) {
     if (titlePlaqueRect().contains(p)) {
         return true;
     }
     if (orderBoardRect(viewW).contains(p)) {
+        return true;
+    }
+    if (timeBarRect(viewW).contains(p)) {
         return true;
     }
     for (int i = 0; i < 3; ++i) {

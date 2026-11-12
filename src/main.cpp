@@ -28,6 +28,9 @@ int main(int argc, char** argv) {
     if (arg == "--game-capture") {
         return cg::game::writeFarmCapture() ? 0 : 1;
     }
+    if (arg == "--dragon-sheet") {
+        return cg::game::writeDragonSheet() ? 0 : 1;
+    }
     if (arg == "--game-smoke") {
         return cg::tests::runFarmChecks() == 0 ? 0 : 1;
     }

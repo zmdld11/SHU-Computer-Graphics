@@ -26,4 +26,7 @@ int runFarmGame();
 // 写 game-world.ppm / game-pond.ppm / game-farm.ppm，返回是否全部成功。
 bool writeFarmCapture();
 
+// 写 dragon-sheet.ppm：6 个角色造型 × 站立/走路，供选型。
+bool writeDragonSheet();
+
 } // namespace cg::game

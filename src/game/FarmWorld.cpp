@@ -239,10 +239,12 @@ void FarmWorld::update(float dt) {
         return;
     }
     playSeconds_ += dt;
-    dayTime_ += dt;
-    if (dayTime_ >= kDayLength) {
-        dayTime_ -= kDayLength;
-        ++day_;
+    if (!timeScrub_) { // 拖时间轴时时刻本身冻结，作物与钓鱼仍按 dt 推进
+        dayTime_ += dt;
+        if (dayTime_ >= kDayLength) {
+            dayTime_ -= kDayLength;
+            ++day_;
+        }
     }
     updateCrops(dt);
     updateFishing(dt);
@@ -934,6 +936,18 @@ void FarmWorld::debugSetPlayerCell(int col, int row) {
 void FarmWorld::debugSetTime(float hour) {
     hour = std::fmod(hour + 24.0f, 24.0f);
     dayTime_ = hour * kDayLength / 24.0f;
+}
+
+void FarmWorld::beginTimeScrub() {
+    timeScrub_ = true;
+}
+
+void FarmWorld::scrubTimeTo(float hour) {
+    dayTime_ = std::fmod(hour + 24.0f, 24.0f) * kDayLength / 24.0f;
+}
+
+void FarmWorld::endTimeScrub() {
+    timeScrub_ = false;
 }
 
 void FarmWorld::debugEnterCabin() {

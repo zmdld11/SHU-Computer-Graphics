@@ -3,6 +3,7 @@
 // 让中点线/扫描线填充的边缘在最终 1× 图上保持干净；每帧只做一次窗口拷贝。
 #include "game/FarmRender.hpp"
 
+#include "curves/BSpline.hpp"
 #include "curves/Bezier.hpp"
 #include "raster/Fill.hpp"
 #include "raster/Rasterizer.hpp"
@@ -250,6 +251,33 @@ public:
             line(px0, py0, px1, py1, c, width);
             px0 = px1;
             py0 = py1;
+        }
+    }
+
+    // 径向衰减的加色光点：自发光专用（萤火虫、水面碎光）。
+    // 辐射强度按 (1-d²)² 衰减，中心过曝、边缘无硬边，叠两三层就有"亮起来"的感觉。
+    void glow(float cx, float cy, float radius, const Color& c, float intensity) {
+        if (radius <= 0.0f || intensity <= 0.0f) {
+            return;
+        }
+        const int cxi = px(cx);
+        const int cyi = py(cy);
+        const int r = std::max(1, static_cast<int>(std::lround(radius * scale_)));
+        for (int dy = -r; dy <= r; ++dy) {
+            for (int dx = -r; dx <= r; ++dx) {
+                const float d2 = static_cast<float>(dx * dx + dy * dy) /
+                                 static_cast<float>(r * r);
+                if (d2 >= 1.0f) {
+                    continue;
+                }
+                const float w = 1.0f - d2;
+                const int a = static_cast<int>(w * w * intensity * 255.0f);
+                if (a <= 0) {
+                    continue;
+                }
+                fb_.blendAddPixel(cxi + dx, cyi + dy, c,
+                                  static_cast<std::uint8_t>(std::min(255, a)));
+            }
         }
     }
 
@@ -666,15 +694,100 @@ void drawLilyPad(Painter& p, float x, float y, float r, const Color& water, bool
     }
 }
 
-void drawFishShadow(Painter& p, float x, float y, float scale) {
-    p.ellipse(x, y, 13.0f * scale, 5.5f * scale, kFish, 18);
-    const std::vector<FPoint> tail = {{x + 10.0f * scale, y},
-                                      {x + 18.0f * scale, y - 5.0f * scale},
-                                      {x + 18.0f * scale, y + 5.0f * scale}};
-    p.polygon(tail, kFish, kFish, 0.0f);
-    p.ellipse(x - 5.0f * scale, y - 1.0f * scale, 4.0f * scale, 2.2f * scale, kFishLight,
-              12);
-    p.ellipse(x - 10.0f * scale, y - 1.0f * scale, 1.2f * scale, 1.2f * scale, kOutline, 8);
+// B 样条在任意参数 u 处的点：直接调 Cox-de Boor 基函数求和。
+// sampleBSpline 只能均匀采样一串点，锦鲤要按相位取任意 u，所以在这里用基函数。
+FPoint evalBSplineAt(const std::vector<FPoint>& cps, int degree, float u) {
+    const std::vector<float> knots = curves::clampedKnots(static_cast<int>(cps.size()), degree);
+    FPoint sum{0.0f, 0.0f};
+    for (std::size_t i = 0; i < cps.size(); ++i) {
+        const float b = curves::bsplineBasis(static_cast<int>(i), degree, u, knots);
+        sum.x += cps[i].x * b;
+        sum.y += cps[i].y * b;
+    }
+    return sum;
+}
+
+// 三条锦鲤：每条一个环形控制多边形（8 点绕池塘一圈），末尾重复前 3 个控制点，
+// 让 clamped 三次 B 样条首尾接上、闭合且切线连续。位置取当前相位的 u，
+// 朝向取 u±ε 两点的切线；鱼身/尾鳍在局部坐标里定义后按切线角旋转。
+void drawKoi(Painter& p, const FarmWorld& world, float camX, float camY) {
+    struct KoiSpec {
+        float rx;    // 控制多边形的半宽（相对池塘半径）
+        float ry;
+        float phase; // 起始相位
+        float speed; // 每秒走过的圈数
+        float size;  // 鱼体缩放
+        Color body;
+        Color fin;
+    };
+    const KoiSpec kois[] = {
+        {0.62f, 0.58f, 0.00f, 0.030f, 1.00f, Color(236, 132, 62), Color(255, 196, 132)},
+        {0.44f, 0.40f, 0.37f, 0.043f, 0.82f, Color(246, 198, 118), Color(255, 230, 180)},
+        {0.70f, 0.66f, 0.71f, 0.024f, 0.74f, Color(198, 92, 58), Color(238, 158, 108)},
+    };
+
+    for (std::size_t k = 0; k < 3; ++k) {
+        const KoiSpec& spec = kois[k];
+        // 8 个控制点绕一圈，半径带一点确定性抖动，循环才不显得像标准椭圆。
+        std::vector<FPoint> ctrl;
+        ctrl.reserve(11);
+        for (int i = 0; i < 8; ++i) {
+            const float a = 2.0f * kPi * static_cast<float>(i) / 8.0f;
+            const float wob = 1.0f + 0.16f * hashSigned(hash2(i * 7 + 3, static_cast<int>(k) * 13 + 5),
+                                                       12, 1.0f);
+            ctrl.push_back({kPondCx + std::cos(a) * kPondRx * spec.rx * wob,
+                            kPondCy + std::sin(a) * kPondRy * spec.ry * wob});
+        }
+        for (int i = 0; i < 3; ++i) { // 重复前 3 点闭合曲线
+            ctrl.push_back(ctrl[static_cast<std::size_t>(i)]);
+        }
+
+        const float u = std::fmod(world.animTime() * spec.speed + spec.phase, 1.0f);
+        const FPoint head = evalBSplineAt(ctrl, 3, u);
+        const FPoint ahead = evalBSplineAt(ctrl, 3, std::fmod(u + 0.004f, 1.0f));
+        const float dx = ahead.x - head.x;
+        const float dy = ahead.y - head.y;
+        if (std::fabs(dx) + std::fabs(dy) < 1e-4f) {
+            continue;
+        }
+        const float ang = std::atan2(dy, dx);
+        const float c = std::cos(ang);
+        const float s = std::sin(ang);
+        const float x = head.x - camX;
+        const float y = head.y - camY;
+        const float sc = spec.size;
+
+        // 局部坐标 (前, 右) → 世界：旋转后平移。
+        auto P = [&](float fwd, float side) {
+            return FPoint{x + fwd * c - side * s, y + fwd * s + side * c};
+        };
+        auto blob = [&](float cx_, float cy_, float rx_, float ry_, const Color& col,
+                        std::uint8_t alpha, int seg) {
+            std::vector<FPoint> pts;
+            pts.reserve(static_cast<std::size_t>(seg));
+            for (int i = 0; i < seg; ++i) {
+                const float a = 2.0f * kPi * static_cast<float>(i) / static_cast<float>(seg);
+                const FPoint q = P(cx_ + std::cos(a) * rx_, cy_ + std::sin(a) * ry_);
+                pts.push_back(q);
+            }
+            p.polygon(pts, col, col, 0.0f, alpha);
+        };
+
+        // 尾鳍会随相位摆，钓鱼的鱼线摆动同一套正弦。
+        const float wag = std::sin(world.animTime() * 5.4f + spec.phase * 9.0f) * 3.6f * sc;
+        const std::vector<FPoint> tail = {P(-10.0f * sc, 0.0f),
+                                          P(-21.0f * sc, -7.5f * sc + wag),
+                                          P(-19.0f * sc, 0.0f),
+                                          P(-21.0f * sc, 7.5f * sc + wag)};
+        p.polygon(tail, spec.fin, spec.fin, 0.0f, 205);
+
+        // 身体：深浅两层叠出水下的体积，背鳍一条。
+        blob(0.0f, 0.0f, 11.5f * sc, 6.2f * sc, spec.body, 214, 22);
+        blob(1.6f * sc, 1.4f * sc, 8.0f * sc, 3.6f * sc, spec.fin, 210, 18);
+        blob(-0.6f, -2.2f * sc, 7.0f * sc, 2.2f * sc, spec.body, 180, 16);
+        // 眼睛
+        blob(7.6f * sc, -1.8f * sc, 1.15f * sc, 1.15f * sc, Color(48, 32, 26), 235, 10);
+    }
 }
 
 void drawDock(Painter& p) {
@@ -734,8 +847,7 @@ void drawPond(Painter& p) {
           12);
     p.arc(cx + 58.0f, cy + 78.0f, 58.0f, 15.0f, 3.55f, 5.7f, kWaterShimmer, 1.4f, 12);
 
-    drawFishShadow(p, cx - 62.0f, cy + 62.0f, 1.0f);
-    drawFishShadow(p, cx + 92.0f, cy + 28.0f, 0.8f);
+    // 鱼不在静态层里画了：锦鲤沿 B 样条每帧游动，见 drawKoi。
 
     drawLilyPad(p, cx - 86.0f, cy - 46.0f, 15.0f, kWaterMid, false);
     drawLilyPad(p, cx + 52.0f, cy - 92.0f, 13.0f, kWaterLight, false);
@@ -1004,125 +1116,374 @@ void drawScene(Painter& p, const FarmWorld& world) {
 
 // ---------------- 胖龙 ----------------
 
-void drawDragon(Painter& p, FPoint pos, bool moving, float walkPhase, float time,
-                int facing) {
-    const float bob = moving
-                          ? -std::fabs(std::sin(walkPhase * 2.0f * kPi)) * 2.5f
-                          : std::sin(time * 2.1f) * 1.0f;
+// ---------------- 胖龙：六个候选造型 ----------------
+// 六个造型共用同一套接口：脚底锚点、朝向翻转、走路起伏、双脚步态。
+// 切换造型只改 kDragonVariant 一个常量，动画、影子、交互都不用动。
+//
+// 造型公式（六个都按这一套来，放在一起才像同一个世界里的生物）：
+//   头宽 > 头高；眼睛压在头部中线偏上、间距大、瞳孔大；嘴小而宽；
+//   腮红靠外；身体宽扁无脖子、两侧露出来；手脚短粗；
+//   尾巴从身体内部起笔、由粗到细（二次贝塞尔扫出的带状多边形），不悬浮。
+
+constexpr int kDragonVariant = 2; // 1 奶蛋 2 奶龙 3 奶鼠 4 奶娃 5 奶兔 6 奶猫
+
+// 一双大眼睛：眼白 + 大虹膜 + 左上高光 + 右下反光。
+// rim 用头部色的深色版而不是纯黑，边缘才不会像贴了两枚纽扣。
+void dEyes(Painter& p, float x, float y, float f, float sep, float rx, float ry,
+           const Color& rim) {
+    for (int s = -1; s <= 1; s += 2) {
+        const float ex = x + static_cast<float>(s) * sep * f;
+        p.ellipseOutline(ex, y, rx, ry, kWhite, rim, 1.0f, 22);
+        p.ellipse(ex + 0.9f * f, y - ry * 0.02f, rx * 0.72f, ry * 0.72f, Color(48, 34, 28),
+                  18);
+        p.ellipse(ex + 0.9f * f - rx * 0.24f, y - ry * 0.30f, rx * 0.24f, rx * 0.24f, kWhite,
+                  8);
+        p.ellipse(ex + 0.9f * f + rx * 0.20f, y + ry * 0.38f, rx * 0.13f, rx * 0.13f,
+                  Color(200, 188, 178), 6);
+    }
+}
+
+void dBlush(Painter& p, float x, float y, float f, float sep) {
+    p.ellipse(x - sep * f, y, 5.0f, 3.2f, kCheek, 14, 140);
+    p.ellipse(x + sep * f, y, 5.0f, 3.2f, kCheek, 14, 140);
+}
+
+// 微笑：控制点比两端更低（屏幕 y 向下），画出来就是嘴角上翘。
+// 线宽用 1px：这个尺寸下再粗就糊成一团黑块了。
+void dSmile(Painter& p, float x, float y, float f, float w, float depth) {
+    p.bezier({x - w * f, y}, {x, y + depth}, {x + w * f, y}, kOutline, 1.0f, 10);
+}
+
+// 两只脚：走路时左右交替抬起，静止时贴地。
+void dFeet(Painter& p, float x, float y, float f, bool moving, float phase,
+           const Color& c, float sep, float rx, float ry) {
+    for (int s = -1; s <= 1; s += 2) {
+        const float lift =
+            moving ? std::max(0.0f, std::sin(phase * 2.0f * kPi +
+                                             (s > 0 ? 0.0f : kPi))) * 3.2f
+                   : 0.0f;
+        p.ellipseOutline(x + static_cast<float>(s) * sep * f, y - 2.0f - lift, rx, ry, c,
+                         kOutline, 1.2f, 16);
+    }
+}
+
+// 沿二次贝塞尔扫出一条由粗到细的带状多边形（尾巴用）。
+// 每个采样点取切线法向、按插值宽度向两侧偏移，再把两条边收成一个闭合多边形。
+void dTaper(Painter& p, FPoint a, FPoint c, FPoint b, float w0, float w1,
+            const Color& fill, int seg = 12) {
+    const std::vector<FPoint> pts = curves::sampleBezier({a, c, b}, seg);
+    if (pts.size() < 2) {
+        return;
+    }
+    std::vector<FPoint> loop;
+    loop.reserve(pts.size() * 2);
+    std::vector<FPoint> rightEdge;
+    for (std::size_t i = 0; i < pts.size(); ++i) {
+        const std::size_t i0 = (i == 0) ? 0 : i - 1;
+        const std::size_t i1 = (i + 1 < pts.size()) ? i + 1 : i;
+        float dx = pts[i1].x - pts[i0].x;
+        float dy = pts[i1].y - pts[i0].y;
+        const float len = std::sqrt(dx * dx + dy * dy);
+        if (len > 1e-5f) {
+            dx /= len;
+            dy /= len;
+        } else {
+            dx = 1.0f;
+            dy = 0.0f;
+        }
+        const float t = static_cast<float>(i) / static_cast<float>(pts.size() - 1);
+        const float w = 0.5f * (w0 + (w1 - w0) * t);
+        loop.push_back({pts[i].x - dy * w, pts[i].y + dx * w});
+        rightEdge.push_back({pts[i].x + dy * w, pts[i].y - dx * w});
+    }
+    for (auto it = rightEdge.rbegin(); it != rightEdge.rend(); ++it) {
+        loop.push_back(*it);
+    }
+    p.polygon(loop, fill, kOutline, 1.0f);
+}
+
+// 1 奶蛋：整只奶白蛋，脸长在蛋壳上，头顶一根嫩芽。
+void drawDragonEgg(Painter& p, float x, float y, float f, bool moving, float phase,
+                   float time) {
+    const Color shell(255, 246, 220);
+    const Color shellShade(238, 214, 170);
+    const Color rim(176, 150, 110);
+    dFeet(p, x, y, f, moving, phase, shellShade, 8.5f, 7.2f, 4.4f);
+
+    // 蛋壳：参数方程点一串多边形，上窄下宽，一次闭合描边，没有接缝。
+    std::vector<FPoint> egg;
+    egg.reserve(44);
+    for (int i = 0; i < 44; ++i) {
+        const float t = 2.0f * kPi * static_cast<float>(i) / 44.0f;
+        const float ex = 23.0f * std::sin(t) * (1.0f + 0.08f * std::cos(t));
+        const float ey = 28.0f * std::cos(t);
+        egg.push_back({x + ex, y - 30.0f - ey});
+    }
+    p.polygon(egg, shell, kOutline, 1.8f);
+    p.ellipse(x - 9.0f * f, y - 24.0f, 6.0f, 9.5f, shellShade, 16, 90);
+
+    // 小手：贴着蛋壳两侧
+    p.ellipseOutline(x - 21.0f * f, y - 25.0f, 4.6f, 6.6f, shell, kOutline, 1.2f, 14);
+    p.ellipseOutline(x + 21.0f * f, y - 25.0f, 4.6f, 6.6f, shell, kOutline, 1.2f, 14);
+
+    dEyes(p, x, y - 39.0f, f, 9.6f, 5.6f, 6.6f, rim);
+    dSmile(p, x, y - 28.5f, f, 5.0f, 3.2f);
+    dBlush(p, x, y - 31.0f, f, 16.0f);
+
+    // 头顶嫩芽
+    const float sway = std::sin(time * 1.8f) * 2.6f;
+    p.bezier({x, y - 57.0f}, {x + sway * 0.4f, y - 63.0f}, {x + sway, y - 67.0f},
+             Color(78, 132, 58), 1.8f, 8);
+    p.ellipseOutline(x + sway - 5.0f, y - 68.0f, 5.2f, 3.0f, kLeafLight, kOutline, 1.0f, 12);
+    p.ellipseOutline(x + sway + 5.0f, y - 70.0f, 5.2f, 3.0f, kLeaf, kOutline, 1.0f, 12);
+}
+
+// 2 奶龙：宽圆大头 + 扁胖身体，一对短圆角、圆吻、粗尾带奶油尾尖。
+void drawDragonBaby(Painter& p, float x, float y, float f, bool moving, float phase,
+                    float time) {
+    (void)time;
+    const float b = -f; // 背后方向
+    const Color rim(158, 104, 40);
+
+    // 尾巴：粗带子，起点藏在身体里，末端一颗奶油色圆头
+    dTaper(p, {x + 13.0f * b, y - 20.0f}, {x + 30.0f * b, y - 9.0f},
+           {x + 33.0f * b, y - 27.0f}, 10.0f, 4.2f, kDragon);
+    p.ellipseOutline(x + 33.0f * b, y - 27.0f, 3.6f, 3.6f, kDragonShade, kOutline, 1.2f,
+                     12);
+
+    dFeet(p, x, y, f, moving, phase, kDragon, 10.5f, 8.6f, 5.2f);
+
+    // 身体：宽扁、无脖子；肚皮小一号，让两侧的黄露出来
+    p.ellipseOutline(x, y - 22.0f, 20.0f, 16.0f, kDragon, kOutline, 1.8f, 30);
+    p.ellipseOutline(x, y - 16.5f, 10.0f, 7.5f, kCream, kCreamShade, 1.0f, 22);
+
+    // 手：贴在体侧偏下，和头拉开距离
+    p.ellipseOutline(x - 20.0f * f, y - 23.0f, 5.0f, 6.6f, kDragon, kOutline, 1.2f, 14);
+    p.ellipseOutline(x + 20.0f * f, y - 23.0f, 5.0f, 6.6f, kDragon, kOutline, 1.2f, 14);
+
+    // 角：矮胖的圆锥（用尾巴同一套带状扫掠），颜色比头部深一档
+    for (float s : {-1.0f, 1.0f}) {
+        dTaper(p, {x + s * 9.0f * f, y - 70.0f}, {x + s * 13.0f * f, y - 76.0f},
+               {x + s * 11.0f * f, y - 80.0f}, 9.0f, 3.4f, kDragonShade, 6);
+    }
+
+    // 头：宽大于高
+    p.ellipseOutline(x, y - 54.0f, 24.0f, 19.0f, kDragon, kOutline, 1.8f, 36);
+
+    // 口鼻：压在眼睛下方；这个尺寸下鼻孔会看成第二对眼睛，省略
+    p.ellipseOutline(x, y - 39.5f, 8.5f, 5.2f, kCream, kCreamShade, 1.0f, 18);
+    dSmile(p, x, y - 38.6f, f, 4.4f, 2.0f);
+
+    dEyes(p, x, y - 55.0f, f, 10.5f, 5.4f, 6.2f, rim);
+    dBlush(p, x, y - 42.5f, f, 17.5f);
+}
+
+// 3 奶鼠：大圆耳 + 圆身 + 细锥尾。
+void drawDragonMouse(Painter& p, float x, float y, float f, bool moving, float phase,
+                     float time) {
+    (void)time;
+    const Color fur(240, 231, 219);
+    const Color furShade(214, 200, 182);
+    const Color rim(150, 132, 112);
+    const float b = -f;
+    dTaper(p, {x + 12.0f * b, y - 13.0f}, {x + 30.0f * b, y - 22.0f},
+           {x + 32.0f * b, y - 3.0f}, 3.6f, 1.4f, Color(232, 166, 166));
+
+    dFeet(p, x, y, f, moving, phase, furShade, 9.5f, 7.6f, 4.6f);
+
+    // 耳朵（先画，压在头后面）
+    for (float s : {-1.0f, 1.0f}) {
+        p.ellipseOutline(x + s * 17.0f * f, y - 67.0f, 10.5f, 10.5f, fur, kOutline,
+                         1.4f, 20);
+        p.ellipse(x + s * 17.0f * f, y - 67.0f, 6.2f, 6.2f, Color(246, 186, 190), 14);
+    }
+
+    // 身体
+    p.ellipseOutline(x, y - 21.0f, 17.0f, 14.5f, fur, kOutline, 1.8f, 26);
+    p.ellipseOutline(x, y - 18.0f, 10.0f, 8.0f, Color(252, 246, 236), furShade, 1.0f, 18);
+    p.ellipseOutline(x - 17.0f * f, y - 25.0f, 5.0f, 7.2f, fur, kOutline, 1.2f, 14);
+    p.ellipseOutline(x + 17.0f * f, y - 25.0f, 5.0f, 7.2f, fur, kOutline, 1.2f, 14);
+
+    // 头
+    p.ellipseOutline(x, y - 50.0f, 24.0f, 19.0f, fur, kOutline, 1.8f, 34);
+    // 吻部 + 粉鼻头
+    p.ellipseOutline(x, y - 39.0f, 8.5f, 5.8f, Color(252, 246, 236), furShade, 1.0f, 18);
+    p.ellipse(x, y - 41.2f, 2.8f, 2.2f, Color(242, 154, 158), 10);
+    dSmile(p, x, y - 36.0f, f, 4.2f, 2.2f);
+    // 胡须
+    for (float s : {-1.0f, 1.0f}) {
+        p.line(x + s * 9.0f * f, y - 42.0f, x + s * 18.0f * f, y - 45.0f, furShade, 1.0f);
+        p.line(x + s * 9.0f * f, y - 39.5f, x + s * 19.0f * f, y - 38.5f, furShade, 1.0f);
+    }
+    dEyes(p, x, y - 52.0f, f, 10.5f, 6.0f, 7.0f, rim);
+    dBlush(p, x, y - 41.0f, f, 17.0f);
+}
+
+// 4 奶娃：胖娃娃，一撮呆毛、背带裤，肤色比其它造型暖。
+void drawDragonBabyHuman(Painter& p, float x, float y, float f, bool moving, float phase,
+                         float time) {
+    const Color skin(255, 224, 198);
+    const Color skinShade(238, 200, 172);
+    const Color rim(186, 140, 112);
+    const Color hair(126, 88, 60);
+    dFeet(p, x, y, f, moving, phase, skinShade, 9.0f, 7.2f, 4.4f);
+
+    // 身体：背带裤
+    p.ellipseOutline(x, y - 21.0f, 16.0f, 15.0f, Color(250, 198, 92), kOutline, 1.6f, 24);
+    p.line(x - 8.5f * f, y - 33.0f, x - 6.5f * f, y - 24.0f, kOutline, 2.0f);
+    p.line(x + 8.5f * f, y - 33.0f, x + 6.5f * f, y - 24.0f, kOutline, 2.0f);
+    p.ellipse(x, y - 27.0f, 2.8f, 2.8f, kCreamShade, 12);
+    // 手
+    p.ellipseOutline(x - 17.0f * f, y - 26.0f, 5.0f, 7.2f, skin, kOutline, 1.2f, 14);
+    p.ellipseOutline(x + 17.0f * f, y - 26.0f, 5.0f, 7.2f, skin, kOutline, 1.2f, 14);
+
+    // 呆毛（先画，从头顶冒出来）
+    const float sway = std::sin(time * 2.2f) * 2.0f;
+    p.bezier({x, y - 70.0f}, {x + sway, y - 78.0f}, {x + 9.0f * f + sway, y - 79.0f}, hair,
+             2.6f, 10);
+
+    // 头
+    p.ellipseOutline(x, y - 52.0f, 24.0f, 20.0f, skin, kOutline, 1.8f, 34);
+    // 刘海：两段弧压在额头
+    p.bezier({x - 17.0f * f, y - 60.0f}, {x - 6.0f * f, y - 71.0f}, {x + 3.0f * f, y - 68.0f},
+             hair, 3.2f, 10);
+    p.bezier({x - 1.0f * f, y - 69.0f}, {x + 9.0f * f, y - 70.0f}, {x + 16.0f * f, y - 61.0f},
+             hair, 3.2f, 10);
+
+    dSmile(p, x, y - 38.0f, f, 5.0f, 2.8f);
+    dEyes(p, x, y - 54.0f, f, 10.0f, 6.0f, 7.0f, rim);
+    dBlush(p, x, y - 42.0f, f, 17.0f);
+}
+
+// 5 奶兔：长耳 + 圆身 + 棉花尾。
+void drawDragonRabbit(Painter& p, float x, float y, float f, bool moving, float phase,
+                      float time) {
+    const Color fur(253, 250, 243);
+    const Color furShade(226, 216, 202);
+    const Color rim(170, 152, 132);
+    const float b = -f;
+    dFeet(p, x, y, f, moving, phase, furShade, 9.0f, 7.6f, 4.6f);
+
+    // 棉花尾
+    p.ellipseOutline(x + 16.0f * b, y - 16.0f, 6.5f, 6.5f, fur, kOutline, 1.2f, 14);
+
+    // 长耳（先画，压在头后面）
+    for (float s : {-1.0f, 1.0f}) {
+        const float tilt = std::sin(time * 1.6f + static_cast<float>(s)) * 1.8f;
+        p.ellipseOutline(x + s * 10.0f * f + tilt, y - 70.0f, 6.4f, 14.0f, fur, kOutline,
+                         1.6f, 20);
+        p.ellipse(x + s * 10.0f * f + tilt, y - 70.0f, 3.3f, 9.5f, Color(246, 190, 196), 14);
+    }
+
+    // 身体
+    p.ellipseOutline(x, y - 21.0f, 17.0f, 15.0f, fur, kOutline, 1.8f, 26);
+    p.ellipse(x, y - 18.0f, 9.5f, 8.0f, furShade, 16, 70);
+    p.ellipseOutline(x - 17.0f * f, y - 25.0f, 5.0f, 7.4f, fur, kOutline, 1.2f, 14);
+    p.ellipseOutline(x + 17.0f * f, y - 25.0f, 5.0f, 7.4f, fur, kOutline, 1.2f, 14);
+
+    // 头
+    p.ellipseOutline(x, y - 50.0f, 23.0f, 19.0f, fur, kOutline, 1.8f, 32);
+    p.ellipse(x, y - 41.0f, 2.8f, 2.2f, Color(242, 158, 166), 10);
+    dSmile(p, x, y - 37.5f, f, 4.4f, 2.4f);
+    dEyes(p, x, y - 52.0f, f, 10.0f, 6.0f, 7.0f, rim);
+    dBlush(p, x, y - 41.0f, f, 16.5f);
+}
+
+// 6 奶猫：橘猫，圆耳 + 额头虎斑 + 卷尾。
+void drawDragonCat(Painter& p, float x, float y, float f, bool moving, float phase,
+                   float time) {
+    (void)time;
+    const Color fur(246, 172, 104);
+    const Color furShade(222, 142, 82);
+    const Color stripe(198, 112, 62);
+    const Color rim(168, 104, 54);
+    const float b = -f;
+    // 尾巴：粗带子 + 三道虎斑
+    dTaper(p, {x + 12.0f * b, y - 14.0f}, {x + 32.0f * b, y - 26.0f},
+           {x + 31.0f * b, y - 3.0f}, 6.0f, 2.6f, furShade);
+    for (int i = 0; i < 3; ++i) {
+        const float t = 0.28f + 0.22f * static_cast<float>(i);
+        const float tx = x + (12.0f + 20.0f * t) * b;
+        const float ty = y - 14.0f - 13.0f * std::sin(kPi * t);
+        p.line(tx, ty - 3.0f, tx, ty + 3.0f, stripe, 1.6f);
+    }
+
+    dFeet(p, x, y, f, moving, phase, fur, 9.5f, 7.8f, 4.8f);
+
+    // 圆润三角耳
+    for (float s : {-1.0f, 1.0f}) {
+        p.polygon({{x + s * 7.0f * f, y - 62.0f},
+                   {x + s * 12.0f * f, y - 76.0f},
+                   {x + s * 20.0f * f, y - 63.0f}},
+                  fur, kOutline, 1.4f);
+        p.ellipse(x + s * 12.5f * f, y - 68.0f, 2.6f, 3.0f, Color(246, 178, 178), 10);
+    }
+
+    // 身体
+    p.ellipseOutline(x, y - 21.0f, 17.0f, 15.0f, fur, kOutline, 1.8f, 26);
+    p.ellipse(x, y - 18.0f, 9.5f, 8.0f, Color(255, 238, 214), 16, 90);
+    p.ellipseOutline(x - 17.0f * f, y - 25.0f, 5.0f, 7.4f, fur, kOutline, 1.2f, 14);
+    p.ellipseOutline(x + 17.0f * f, y - 25.0f, 5.0f, 7.4f, fur, kOutline, 1.2f, 14);
+
+    // 头
+    p.ellipseOutline(x, y - 50.0f, 24.0f, 19.0f, fur, kOutline, 1.8f, 34);
+    // 额头虎斑：三短竖，落在头顶内侧，不碰描边
+    for (int i = -1; i <= 1; ++i) {
+        p.line(x + static_cast<float>(i) * 5.5f * f, y - 66.0f,
+               x + static_cast<float>(i) * 7.0f * f, y - 60.0f, stripe, 2.0f);
+    }
+    // 口鼻
+    p.ellipseOutline(x, y - 38.0f, 8.0f, 5.6f, Color(255, 242, 224), furShade, 1.0f, 18);
+    p.polygon({{x - 2.6f * f, y - 40.6f}, {x + 2.6f * f, y - 40.6f}, {x, y - 38.2f}},
+              Color(238, 146, 150), Color(238, 146, 150), 0.0f);
+    for (float s : {-1.0f, 1.0f}) {
+        p.line(x + s * 8.5f * f, y - 39.0f, x + s * 18.0f * f, y - 42.0f, furShade, 1.0f);
+        p.line(x + s * 8.5f * f, y - 37.0f, x + s * 19.0f * f, y - 36.0f, furShade, 1.0f);
+    }
+    dEyes(p, x, y - 52.0f, f, 10.5f, 6.0f, 7.0f, rim);
+    dBlush(p, x, y - 41.0f, f, 17.0f);
+}
+
+// 造型分发：所有外部调用都走这里，切造型只改 kDragonVariant。
+void drawDragonVariant(Painter& p, int variant, FPoint pos, bool moving, float walkPhase,
+                       float time, int facing) {
+    const float bob = moving ? -std::fabs(std::sin(walkPhase * 2.0f * kPi)) * 2.5f
+                             : std::sin(time * 2.1f) * 1.0f;
     const float x = pos.x;
     const float y = pos.y + bob;
     const float f = facing < 0 ? -1.0f : 1.0f;
-    auto X = [x, f](float dx) { return x + dx * f; };
 
+    // 脚下投影：取地面色压暗，任何地形上都贴得住。
     const Color ground = p.sample(pos.x, pos.y);
     p.ellipse(pos.x, pos.y + 1.0f, 23.0f, 6.5f, darken(ground, 0.72f), 24);
 
-    // 尾巴：从身体左侧伸出去，末端一个小奶油色尾尖。
-    p.ellipseOutline(X(-22.0f), y - 15.0f, 10.0f, 8.0f, kDragonShade, kOutline, 1.0f, 20);
-    p.ellipseOutline(X(-34.0f), y - 11.0f, 8.0f, 7.0f, kDragonShade, kOutline, 1.0f, 18);
-    p.ellipseOutline(X(-45.0f), y - 15.0f, 7.0f, 6.0f, kDragon, kOutline, 1.0f, 16);
-    const std::vector<FPoint> tailTip = {{X(-50.0f), y - 14.0f},
-                                         {X(-58.0f), y - 21.0f},
-                                         {X(-63.0f), y - 12.0f},
-                                         {X(-54.0f), y - 6.0f}};
-    p.polygon(tailTip, kCreamShade, kOutline, 1.0f);
-
-    // 翅膀（在身体后面）：比身体宽一圈，远看也能认出是龙。
-    for (float s : {-1.0f, 1.0f}) {
-        const std::vector<FPoint> wing = {{X(s * 15.0f), y - 38.0f},
-                                          {X(s * 32.0f), y - 57.0f},
-                                          {X(s * 41.0f), y - 43.0f},
-                                          {X(s * 31.0f), y - 29.0f},
-                                          {X(s * 18.0f), y - 32.0f}};
-        p.polygon(wing, kDragonShade, kOutline, 1.0f);
-        p.line(X(s * 17.0f), y - 36.0f, X(s * 38.0f), y - 43.0f, kDragon, 1.0f);
-        p.line(X(s * 19.0f), y - 33.0f, X(s * 31.0f), y - 30.0f, kDragon, 1.0f);
+    switch (variant) {
+    case 1: drawDragonEgg(p, x, y, f, moving, walkPhase, time); break;
+    case 3: drawDragonMouse(p, x, y, f, moving, walkPhase, time); break;
+    case 4: drawDragonBabyHuman(p, x, y, f, moving, walkPhase, time); break;
+    case 5: drawDragonRabbit(p, x, y, f, moving, walkPhase, time); break;
+    case 6: drawDragonCat(p, x, y, f, moving, walkPhase, time); break;
+    default: drawDragonBaby(p, x, y, f, moving, walkPhase, time); break;
     }
-
-    // 脚（在身体下面，先画）
-    p.ellipseOutline(X(-11.0f), y - 3.0f, 9.0f, 5.5f, kDragon, kOutline, 1.2f, 20);
-    p.ellipseOutline(X(11.0f), y - 3.0f, 9.0f, 5.5f, kDragon, kOutline, 1.2f, 20);
-    p.ellipse(X(-13.0f), y - 1.5f, 2.2f, 1.8f, kCream, 10);
-    p.ellipse(X(-8.0f), y - 1.5f, 2.2f, 1.8f, kCream, 10);
-    p.ellipse(X(9.0f), y - 1.5f, 2.2f, 1.8f, kCream, 10);
-    p.ellipse(X(14.0f), y - 1.5f, 2.2f, 1.8f, kCream, 10);
-
-    // 身体与肚皮
-    p.ellipseOutline(x, y - 26.0f, 20.0f, 23.0f, kDragon, kOutline, 2.0f, 40);
-    p.ellipseOutline(x, y - 20.0f, 13.0f, 15.0f, kCream, kCreamShade, 1.0f, 28);
-
-    // 手
-    p.ellipseOutline(X(-19.0f), y - 30.0f, 6.5f, 10.0f, kDragon, kOutline, 1.2f, 20);
-    p.ellipseOutline(X(19.0f), y - 30.0f, 6.5f, 10.0f, kDragon, kOutline, 1.2f, 20);
-    p.ellipse(X(-20.0f), y - 24.0f, 2.0f, 1.6f, kCream, 10);
-    p.ellipse(X(20.0f), y - 24.0f, 2.0f, 1.6f, kCream, 10);
-
-    // 头
-    p.ellipseOutline(x, y - 49.0f, 18.0f, 16.0f, kDragon, kOutline, 2.0f, 36);
-
-    // 角
-    for (float s : {-1.0f, 1.0f}) {
-        const std::vector<FPoint> horn = {{X(s * 13.0f), y - 61.0f},
-                                          {X(s * 6.0f), y - 64.0f},
-                                          {X(s * 9.0f), y - 74.0f}};
-        p.polygon(horn, kCreamShade, kOutline, 1.0f);
-    }
-
-    // 眼睛（轻微对眼，表情更呆）
-    p.ellipseOutline(X(-7.0f), y - 51.0f, 5.5f, 6.5f, kWhite, kOutline, 1.0f, 24);
-    p.ellipseOutline(X(7.0f), y - 51.0f, 5.5f, 6.5f, kWhite, kOutline, 1.0f, 24);
-    p.ellipse(X(-6.0f), y - 50.0f, 2.5f, 2.8f, Color(32, 24, 20), 16);
-    p.ellipse(X(8.0f), y - 50.0f, 2.5f, 2.8f, Color(32, 24, 20), 16);
-    p.ellipse(X(-7.0f), y - 52.0f, 1.0f, 1.0f, kWhite, 10);
-    p.ellipse(X(7.0f), y - 52.0f, 1.0f, 1.0f, kWhite, 10);
-
-    // 腮红与口鼻
-    p.ellipse(X(-13.0f), y - 44.0f, 4.0f, 2.8f, kCheek, 16);
-    p.ellipse(X(13.0f), y - 44.0f, 4.0f, 2.8f, kCheek, 16);
-    p.ellipseOutline(x, y - 43.0f, 9.0f, 5.5f, kCream, kCreamShade, 1.0f, 24);
-    p.ellipse(X(-3.0f), y - 44.0f, 1.2f, 1.2f, Color(70, 48, 32), 10);
-    p.ellipse(X(3.0f), y - 44.0f, 1.2f, 1.2f, Color(70, 48, 32), 10);
-    p.bezier({X(-4.0f), y - 40.0f}, {x, y - 37.0f}, {X(4.0f), y - 40.0f}, kOutline, 1.2f,
-             10);
 }
 
-// 龙的剪影：与 drawDragon 同一套外轮廓几何（尾/翅/脚/身/手/头/角），
-// 全部实心同色，省略眼/肚皮等内部细节。几何改动需与 drawDragon 保持同步。
+void drawDragon(Painter& p, FPoint pos, bool moving, float walkPhase, float time,
+                int facing) {
+    drawDragonVariant(p, kDragonVariant, pos, moving, walkPhase, time, facing);
+}
+
+// 通用剪影：头 + 身 + 脚 + 耳/角/尾的外包，六个造型共用。
+// 影子是低透明度的模糊一坨，不需要逐造型精确，也就不必跟着造型同步几何。
 void drawDragonSilhouette(Painter& p, FPoint pos, int facing) {
     const float y = pos.y;
     const float f = facing < 0 ? -1.0f : 1.0f;
-    auto X = [x = pos.x, f](float dx) { return x + dx * f; };
-
-    // 尾巴
-    p.ellipse(X(-22.0f), y - 15.0f, 10.0f, 8.0f, Color::White(), 20);
-    p.ellipse(X(-34.0f), y - 11.0f, 8.0f, 7.0f, Color::White(), 18);
-    p.ellipse(X(-45.0f), y - 15.0f, 7.0f, 6.0f, Color::White(), 16);
-    p.polygon({{X(-50.0f), y - 14.0f}, {X(-58.0f), y - 21.0f},
-               {X(-63.0f), y - 12.0f}, {X(-54.0f), y - 6.0f}},
-              Color::White(), Color::White(), 0.0f);
-    // 翅膀
-    for (float s : {-1.0f, 1.0f}) {
-        p.polygon({{X(s * 15.0f), y - 38.0f}, {X(s * 32.0f), y - 57.0f},
-                   {X(s * 41.0f), y - 43.0f}, {X(s * 31.0f), y - 29.0f},
-                   {X(s * 18.0f), y - 32.0f}},
-                  Color::White(), Color::White(), 0.0f);
-    }
-    // 脚
-    p.ellipse(X(-11.0f), y - 3.0f, 9.0f, 5.5f, Color::White(), 20);
-    p.ellipse(X(11.0f), y - 3.0f, 9.0f, 5.5f, Color::White(), 20);
-    // 身体（比描边版各放宽 1px，盖住描边宽度）
-    p.ellipse(pos.x, y - 26.0f, 21.0f, 24.0f, Color::White(), 40);
-    // 手
-    p.ellipse(X(-19.0f), y - 30.0f, 6.5f, 10.0f, Color::White(), 20);
-    p.ellipse(X(19.0f), y - 30.0f, 6.5f, 10.0f, Color::White(), 20);
-    // 头
-    p.ellipse(pos.x, y - 49.0f, 19.0f, 17.0f, Color::White(), 36);
-    // 角
-    for (float s : {-1.0f, 1.0f}) {
-        p.polygon({{X(s * 13.0f), y - 61.0f}, {X(s * 6.0f), y - 64.0f},
-                   {X(s * 9.0f), y - 74.0f}},
-                  Color::White(), Color::White(), 0.0f);
-    }
+    p.ellipse(pos.x, y - 21.0f, 20.0f, 17.0f, Color::White(), 26);
+    p.ellipse(pos.x, y - 54.0f, 24.0f, 19.0f, Color::White(), 30);
+    p.ellipse(pos.x - 10.0f * f, y - 3.0f, 9.0f, 5.5f, Color::White(), 14);
+    p.ellipse(pos.x + 10.0f * f, y - 3.0f, 9.0f, 5.5f, Color::White(), 14);
+    p.ellipse(pos.x - 14.0f * f, y - 71.0f, 6.5f, 8.0f, Color::White(), 12);
+    p.ellipse(pos.x + 14.0f * f, y - 71.0f, 6.5f, 8.0f, Color::White(), 12);
+    p.ellipse(pos.x + 27.0f * f, y - 16.0f, 10.0f, 8.0f, Color::White(), 14);
 }
 
 // ---------------- 悬停提示 ----------------
@@ -1822,6 +2183,140 @@ void drawLampGlow(Painter& p, const FarmWorld& world, float camX, float camY,
     p.ellipse(x, y + 3.0f, 9.0f, 9.5f, Color(255, 236, 170), 18, core);
 }
 
+// ---------------- 夜间的自发光 ----------------
+
+// 夜色权重：日落后 1.5 小时内淡入、日出前 1.5 小时内淡出，白昼为 0。
+float nightFactor(float hour) {
+    hour = std::fmod(hour + 24.0f, 24.0f);
+    const float dusk = std::clamp((hour - 18.8f) / 1.5f, 0.0f, 1.0f);
+    const float dawn = std::clamp((5.7f - hour) / 1.5f, 0.0f, 1.0f);
+    return std::max(dusk, dawn);
+}
+
+// 萤火虫：草丛上空的自发光粒子，呼吸式明灭 + 缓慢漂移。
+// 位置用确定性哈希撒点（同一次运行每帧一致），避开池塘与农田土台。
+void drawFireflies(Painter& p, const FarmWorld& world, float camX, float camY) {
+    const float night = nightFactor(world.hour());
+    if (night <= 0.01f) {
+        return;
+    }
+    struct Anchor {
+        float x;
+        float y;
+    };
+    static const std::vector<Anchor> anchors = [] {
+        std::vector<Anchor> v;
+        for (int i = 0; v.size() < 26 && i < 600; ++i) {
+            const std::uint32_t h = hash2(i * 37 + 11, i * 91 + 29);
+            const float x = 60.0f + static_cast<float>(h & 0x3FFu) / 1023.0f * (kWorldW - 120.0f);
+            const float y =
+                80.0f + static_cast<float>((h >> 10) & 0x3FFu) / 1023.0f * (kWorldH - 160.0f);
+            if (inPond(x, y, 26.0f)) {
+                continue;
+            }
+            if (x > kFarmX - 30.0f && x < kFarmX + kFarmW + 30.0f && y > kFarmY - 30.0f &&
+                y < kFarmY + kFarmH + 30.0f) {
+                continue; // 土台上不落萤火
+            }
+            v.push_back({x, y});
+        }
+        return v;
+    }();
+
+    const float t = world.animTime();
+    for (std::size_t i = 0; i < anchors.size(); ++i) {
+        const float fi = static_cast<float>(i);
+        const float x = anchors[i].x + std::sin(t * 0.51f + fi * 1.7f) * 26.0f +
+                        std::sin(t * 0.19f + fi * 0.6f) * 13.0f;
+        const float y = anchors[i].y + std::cos(t * 0.44f + fi * 2.3f) * 18.0f +
+                        std::sin(t * 0.27f + fi * 1.1f) * 9.0f;
+        const float sx = x - camX;
+        const float sy = y - camY;
+        if (sx < -20.0f || sy < -20.0f || sx > static_cast<float>(p.fb().width()) + 20.0f ||
+            sy > static_cast<float>(p.fb().height()) + 20.0f) {
+            continue;
+        }
+        // 单个亮点：外圈柔光 + 内圈高光，两层加色叠出过曝的核心。
+        const float blink = 0.25f + 0.75f * std::pow(
+                                          0.5f + 0.5f * std::sin(t * 1.7f + fi * 2.1f), 3.0f);
+        const float k = blink * night;
+        p.glow(sx, sy, 9.0f + 3.0f * blink, Color(168, 236, 108), 0.34f * k);
+        p.glow(sx, sy, 3.2f, Color(236, 255, 176), 0.85f * k);
+    }
+}
+
+// 水面碎光：太阳（夜里是月亮）的方位投影到池塘，形成一条随时刻横移的碎光带。
+// 它证明画面里的光有方向——光斑会从池塘东侧一路漂到西侧，不是画死的贴图。
+void drawWaterGlint(Painter& p, const FarmWorld& world, float camX, float camY) {
+    const float hour = std::fmod(world.hour() + 24.0f, 24.0f);
+    const SkyState sky = skyAt(hour);
+    float phase = 0.0f; // 0=东 1=西
+    float intensity = 0.0f;
+    Color tint = Color(255, 226, 168);
+    if (sky.sunUp) {
+        phase = sky.sunPhase;
+        // 正午最亮、日出日落最弱；晨昏给暖橙，正午偏白。
+        intensity = 0.22f + 0.55f * sky.sunElevation;
+        tint = lerpColor(Color(255, 176, 96), Color(255, 240, 206), sky.sunElevation);
+    } else {
+        // 月亮与太阳反相：18:00 在东，06:00 在西，中途过顶。
+        const float moonHour = std::fmod(hour + 6.0f, 24.0f); // 18 → 0
+        phase = std::clamp(moonHour / 12.0f, 0.0f, 1.0f);
+        intensity = 0.58f * std::sin(kPi * phase);
+        tint = Color(186, 214, 255);
+    }
+    if (intensity <= 0.01f) {
+        return;
+    }
+
+    // 光斑中心在地面上的横坐标：东（phase=0）→ 西（phase=1），
+    // 直接按比例铺到池塘宽度的 60% 内，扫过整池而不是贴在岸边。
+    // 注意 phase 是"太阳走到哪"，光斑要在它的对面一侧，所以用 (0.5 - phase)。
+    const float bandX = kPondCx + (0.5f - phase) * 2.0f * kPondRx * 0.6f;
+    const float t = world.animTime();
+
+    // 每一行画两道错开的短横，整体才像"碎"光；一整条长横看着像划痕。
+    for (int i = 0; i < 24; ++i) {
+        const float v = static_cast<float>(i) / 23.0f;
+        const float y = kPondCy + (v - 0.5f) * kPondRy * 1.74f;
+        const float yn = (y - kPondCy) / kPondRy;
+        if (std::fabs(yn) >= 0.97f) {
+            continue;
+        }
+        const float halfW = kPondRx * std::sqrt(1.0f - yn * yn) * 0.92f;
+        const float reach = 1.0f - std::fabs(yn) * 1.05f;
+        for (int k = 0; k < 2; ++k) {
+            const float fi = static_cast<float>(i) * 2.0f + static_cast<float>(k);
+            const float wobble = std::sin(t * 1.3f + fi * 0.9f) * 7.0f +
+                                 std::sin(t * 2.7f + fi * 2.3f) * 3.5f;
+            const float lane = (static_cast<float>(k) - 0.5f) * (7.0f + 15.0f * reach);
+            const float cx =
+                std::clamp(bandX + wobble + lane - kPondCx, -halfW + 5.0f, halfW - 5.0f);
+            const float pulse = 0.55f + 0.45f * std::sin(t * 2.1f + fi * 1.7f) *
+                                            std::sin(t * 2.1f + fi * 1.7f);
+            const float len = (3.0f + 13.0f * reach) * pulse + 2.0f;
+            const float a = intensity * (0.15f + 0.55f * pulse) * (0.35f + 0.65f * reach);
+            // 世界坐标算完再减相机：碎光只在水面上，用世界坐标判断栈道遮挡最直接。
+            // 每道碎光再上下抖 2px，免得排成一条虚线。
+            const float wy = y + std::sin(t * 3.1f + fi * 2.1f) * 2.0f;
+            const float wx0 = kPondCx + cx - len * 0.5f;
+            const float wx1 = kPondCx + cx + len * 0.5f;
+            // 栈道横穿池塘西缘，碎光不落在木板上。
+            if (wy >= kDockY - 4 && wy <= kDockY + kDockH + 4 && wx0 < kDockX + kDockW + 10) {
+                continue;
+            }
+            const int yi = static_cast<int>(std::lround(wy - camY));
+            const int x0 = static_cast<int>(std::lround(wx0 - camX));
+            const int x1 = static_cast<int>(std::lround(wx1 - camX));
+            p.fb().blendAddSpan(yi, x0, x1, tint,
+                                static_cast<std::uint8_t>(std::min(150.0f, a * 255.0f)));
+            // 再补一行淡的，碎光才有厚度，不是一根头发丝
+            p.fb().blendAddSpan(yi + 1, x0, x1, tint,
+                                static_cast<std::uint8_t>(std::min(90.0f, a * 150.0f)));
+        }
+    }
+}
+
 // ---------------- 小屋室内 ----------------
 
 // 室内静态布置：墙、地板、地毯、床、储物箱、桌子、门垫。窗户玻璃的"天色"
@@ -1931,40 +2426,93 @@ void drawCabinRoom(Painter& p) {
 
 // ---------------- 时钟 HUD ----------------
 
-void drawClock(Painter& p, const FarmWorld& world, int viewW) {
-    const int w = 190;
-    const int h = 44;
-    const int x = viewW / 2 - w / 2;
-    const int y = 14;
-    p.rect(x + 4, y + 5, w, h, kBorderGrass);
-    p.rect(x, y, w, h, kOutline);
-    p.rect(x + 2, y + 2, w - 4, h - 4, kWood);
-    p.rect(x + 6, y + 6, w - 12, 2.0f, kWoodLight);
+// ---------------- 时间轴 HUD ----------------
+// 顶部中央：一行时刻文字 + 24h 轨道 + 可拖拽旋钮。
+// 轨道底色直接由 skyAt/ambientTintAt 采样生成，和场景里的光照共用同一份模型，
+// 所以条上的"天亮/黄昏/入夜"和画面是同步的，不是另画一套配色。
 
-    // 太阳/月亮图标：白天画光芒，夜里画月牙。
-    const SkyState sky = skyAt(world.hour());
-    const float ix = static_cast<float>(x) + 24.0f;
-    const float iy = static_cast<float>(y) + 22.0f;
-    if (sky.sunUp) {
-        for (int i = 0; i < 8; ++i) {
-            const float a = 2.0f * kPi * static_cast<float>(i) / 8.0f +
-                            world.animTime() * 0.4f;
-            p.line(ix + std::cos(a) * 9.0f, iy + std::sin(a) * 9.0f,
-                   ix + std::cos(a) * 12.5f, iy + std::sin(a) * 12.5f,
-                   Color(250, 204, 90), 1.5f);
-        }
-        p.ellipse(ix, iy, 6.5f, 6.5f, Color(250, 204, 90), 18);
-    } else {
-        p.ellipse(ix, iy, 7.5f, 7.5f, kCream, 20);
-        p.ellipse(ix + 3.5f, iy - 2.0f, 6.0f, 6.0f, kWood, 18);
-        p.ellipse(ix - 2.0f, iy + 1.0f, 1.0f, 1.0f, kCreamShade, 8);
-        p.ellipse(ix - 3.5f, iy - 3.0f, 0.8f, 0.8f, kCreamShade, 8);
+void drawTimeBar(Painter& p, const FarmWorld& world, int viewW) {
+    const RectI panel = timeBarRect(viewW);
+    const RectI track = timeTrackRect(viewW);
+    const float px = static_cast<float>(panel.x);
+    const float py = static_cast<float>(panel.y);
+
+    // 木牌底：与左上标题牌、订单板同一套木色。
+    p.rect(px + 4, py + 5, panel.w, panel.h, kBorderGrass);
+    p.rect(px, py, panel.w, panel.h, kOutline);
+    p.rect(px + 2, py + 2, panel.w - 4, panel.h - 4, kWood);
+    p.rect(px + 6, py + 6, panel.w - 12, 2.0f, kWoodLight);
+
+    // 日照弧：6:00 到 18:00 的太阳轨迹，用中点圆弧的角度筛选画一段浅弧。
+    // 圆心放在轨道下方很远的位置，半径大、弧就平；两端的角度由半宽反算。
+    {
+        constexpr float kArcR = 520.0f;
+        const float halfW = static_cast<float>(track.w) / 2.0f;
+        const float dy = kArcR - std::sqrt(kArcR * kArcR - halfW * halfW); // 弧顶抬高量
+        const int cx = track.x + track.w / 2;
+        const int cy = static_cast<int>(std::lround(track.y + kArcR - dy));
+        const float span = std::asin(halfW / kArcR) * 180.0f / kPi;
+        raster::drawArc(p.fb(), {cx, cy}, static_cast<int>(kArcR), 270.0f - span,
+                        270.0f + span, Color(246, 214, 142), {});
     }
 
-    char buf[32];
-    std::snprintf(buf, sizeof(buf), "第%d天 %02d:%02d", world.day(),
-                  static_cast<int>(world.hour()), static_cast<int>(world.hour() * 60.0f) % 60);
-    text::drawText(p.fb(), x + 46, y + 13, buf, kCream);
+    // 24 段轨道：每段半小时到一小时，颜色取该时段中点的天光与环境色。
+    const float segW = static_cast<float>(track.w) / 24.0f;
+    for (int i = 0; i < 24; ++i) {
+        const float h = static_cast<float>(i) + 0.5f;
+        const SkyState sky = skyAt(h);
+        AmbientTint warm;
+        AmbientTint blue;
+        ambientTintAt(h, blue, warm);
+        Color c = sky.sunUp ? lerpColor(Color(70, 96, 128), Color(150, 196, 228),
+                                       0.35f + 0.65f * sky.sunElevation)
+                            : Color(30, 40, 66);
+        if (warm.alpha > 0) {
+            c = lerpColor(c, Color(warm.r, warm.g, warm.b),
+                          static_cast<float>(warm.alpha) / 320.0f);
+        }
+        if (sky.lampIntensity > 0.0f && !sky.sunUp) {
+            c = lerpColor(c, Color(96, 78, 44), 0.25f * sky.lampIntensity);
+        }
+        const int x0 = static_cast<int>(std::lround(static_cast<float>(track.x) + segW * i));
+        const int x1 = static_cast<int>(std::lround(static_cast<float>(track.x) + segW * (i + 1))) - 1;
+        p.rect(static_cast<float>(x0), static_cast<float>(track.y),
+               static_cast<float>(x1 - x0 + 1), static_cast<float>(track.h), c);
+    }
+    // 轨道外框与整点刻度（0/6/12/18/24）。
+    p.rectOutline(static_cast<float>(track.x) - 1.0f, static_cast<float>(track.y) - 1.0f,
+                  static_cast<float>(track.w) + 1.0f, static_cast<float>(track.h) + 1.0f,
+                  kOutline, 1.0f);
+    for (int i = 0; i <= 24; i += 6) {
+        const float tx = static_cast<float>(track.x) + segW * static_cast<float>(i);
+        p.line(tx, static_cast<float>(track.y + track.h), tx,
+               static_cast<float>(track.y + track.h + 4), kCreamShade, 1.0f);
+    }
+
+    // 旋钮：中点圆画环 + 实心圆盘，盘里太阳/月牙随时刻切换。
+    const float hour = world.hour();
+    const float kx = trackXFromTime(hour, viewW);
+    const float ky = static_cast<float>(track.y) + static_cast<float>(track.h) / 2.0f;
+    const SkyState sky = skyAt(hour);
+    raster::drawCircle(p.fb(), {static_cast<int>(std::lround(kx)),
+                                static_cast<int>(std::lround(ky))},
+                       9, kOutline, {});
+    p.ellipse(kx, ky, 7.5f, 7.5f, world.timeScrubbing() ? kWhite : kCream, 18);
+    if (sky.sunUp) {
+        p.ellipse(kx, ky, 4.2f, 4.2f, Color(248, 186, 62), 16);
+        p.ellipse(kx - 1.2f, ky - 1.4f, 1.3f, 1.3f, Color(255, 236, 178), 10);
+    } else {
+        p.ellipse(kx - 0.8f, ky, 4.0f, 4.0f, Color(226, 232, 246), 16);
+        p.ellipse(kx + 2.6f, ky - 1.2f, 3.6f, 3.6f, kCream, 14);
+    }
+
+    // 时刻文字：天 + 24 小时制。
+    const float minutesF = hour * 60.0f;
+    char buf[40];
+    std::snprintf(buf, sizeof(buf), "第 %d 天   %02d:%02d", world.day(),
+                  static_cast<int>(hour), static_cast<int>(minutesF) % 60);
+    const int tw = text::textWidth(buf);
+    text::drawText(p.fb(), panel.x + (panel.w - tw) / 2, panel.y + 6, buf, kCream);
 }
 
 // ---------------- 超采样降采样 ----------------
@@ -2074,8 +2622,12 @@ void FarmRender::frame(FrameBuffer& fb, const FarmWorld& world, bool hud) {
         fb.copyRectFrom(background_, camX, camY, fb.width(), fb.height(), 0, 0);
         const SkyState sky = skyAt(world.hour());
 
+        // 锦鲤在背景之上、水纹之下：鱼在水里，水面的反光和波浪盖在它上面。
+        drawKoi(p, world, static_cast<float>(camX), static_cast<float>(camY));
+
         // 水面波纹与炊烟：环境动画，画在背景之上、实体之下。
         drawPondShimmer(p, world, static_cast<float>(camX), static_cast<float>(camY));
+        drawWaterGlint(p, world, static_cast<float>(camX), static_cast<float>(camY));
         drawChimneySmoke(p, world, static_cast<float>(camX), static_cast<float>(camY));
 
         // 影子最先画（贴着背景），晨昏时太阳与路灯两套影子同时出现。
@@ -2094,11 +2646,13 @@ void FarmRender::frame(FrameBuffer& fb, const FarmWorld& world, bool hud) {
         // 夜色/晨昏环境色压在场景与角色上，再由路灯光晕在夜里"点亮"灯周。
         applyAmbient(fb, world.hour());
         drawLampGlow(p, world, static_cast<float>(camX), static_cast<float>(camY), sky);
+        // 萤火虫是自发光，要压在环境色之后，否则会被夜色一起压暗。
+        drawFireflies(p, world, static_cast<float>(camX), static_cast<float>(camY));
     }
 
     if (hud) {
         drawHud(p, world, fb.width(), fb.height());
-        drawClock(p, world, fb.width());
+        drawTimeBar(p, world, fb.width());
         if (world.won()) {
             drawWonPanel(p, world, fb.width(), fb.height());
         }
@@ -2116,6 +2670,7 @@ FrameBuffer FarmRender::captureWorld(const FarmWorld& world) const {
     FrameBuffer hi(kWorldW * 2, kWorldH * 2);
     Painter p(hi, 2.0f);
     drawScene(p, world);
+    drawKoi(p, world, 0.0f, 0.0f); // 整图导出也带上锦鲤（固定相位）
     drawDragon(p, world.playerPos(), false, 0.0f, 0.0f, world.facing());
     FrameBuffer out(kWorldW, kWorldH);
     downsample2x(hi, out);
@@ -2160,6 +2715,40 @@ std::vector<FrameBuffer> FarmRender::captureLayers(const FarmWorld& world) const
     drawTrees(p);
     snapshot();
     return layers;
+}
+
+FrameBuffer FarmRender::captureDragonSheet() const {
+    constexpr int kCols = 6;
+    constexpr int kCellW = 190;
+    constexpr int kCellH = 210;
+    constexpr int kHead = 42;
+    FrameBuffer fb(kCols * kCellW, kHead + 2 * kCellH);
+    Painter p(fb, 1.0f);
+
+    p.rect(0.0f, 0.0f, static_cast<float>(fb.width()), static_cast<float>(fb.height()), kGrass);
+    p.rect(0.0f, 0.0f, static_cast<float>(fb.width()), static_cast<float>(kHead), kBorderGrass);
+    text::drawText(fb, 14, 12, "胖龙农场 · 角色造型候选（上排站立，下排走路）", kCream);
+
+    const char* names[] = {"1 奶蛋", "2 奶龙", "3 奶鼠", "4 奶娃", "5 奶兔", "6 奶猫"};
+    for (int i = 0; i < kCols; ++i) {
+        const float cx = static_cast<float>(i * kCellW + kCellW / 2);
+        if ((i & 1) != 0) {
+            p.rect(static_cast<float>(i * kCellW), static_cast<float>(kHead),
+                   static_cast<float>(kCellW), static_cast<float>(2 * kCellH), kGrassDark);
+        }
+        p.line(static_cast<float>(i * kCellW), static_cast<float>(kHead),
+               static_cast<float>(i * kCellW), static_cast<float>(fb.height()), kBorderGrass,
+               1.0f);
+        const int tw = text::textWidth(names[i]);
+        text::drawText(fb, i * kCellW + (kCellW - tw) / 2, kHead + 10, names[i], kCream);
+        // 站立：相位 0；走路：把步态相位拨到抬脚的中段，两只脚一高一低看得出来。
+        drawDragonVariant(p, i + 1, {cx, static_cast<float>(kHead + 176)}, false, 0.0f, 0.6f,
+                          1);
+        drawDragonVariant(p, i + 1,
+                          {cx, static_cast<float>(kHead + kCellH + 176)}, true, 0.25f, 0.6f,
+                          1);
+    }
+    return fb;
 }
 
 } // namespace cg::game

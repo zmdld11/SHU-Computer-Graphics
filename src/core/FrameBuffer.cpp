@@ -116,6 +116,44 @@ void FrameBuffer::blendRect(int x0, int y0, int x1, int y1, const Color& color,
     }
 }
 
+void FrameBuffer::blendAddSpan(int y, int x0, int x1, const Color& color, std::uint8_t alpha) {
+    if (y < 0 || y >= height_ || alpha == 0) {
+        return;
+    }
+    const int xa = std::max(0, x0);
+    const int xb = std::min(width_ - 1, x1);
+    if (xa > xb) {
+        return;
+    }
+    auto* row = pixels_.data() + rowOffset(width_, y);
+    const std::uint32_t a = alpha;
+    const std::uint32_t cr = static_cast<std::uint32_t>(color.r) * a / 255u;
+    const std::uint32_t cg = static_cast<std::uint32_t>(color.g) * a / 255u;
+    const std::uint32_t cb = static_cast<std::uint32_t>(color.b) * a / 255u;
+    for (int x = xa; x <= xb; ++x) {
+        const std::uint32_t d = row[x];
+        const std::uint32_t r = std::min<std::uint32_t>(255u, (d & 0xFFu) + cr);
+        const std::uint32_t g = std::min<std::uint32_t>(255u, ((d >> 8) & 0xFFu) + cg);
+        const std::uint32_t b = std::min<std::uint32_t>(255u, ((d >> 16) & 0xFFu) + cb);
+        row[x] = r | (g << 8) | (b << 16) | (0xFFu << 24);
+    }
+}
+
+void FrameBuffer::blendAddRect(int x0, int y0, int x1, int y1, const Color& color,
+                               std::uint8_t alpha) {
+    if (x1 < x0 || y1 < y0 || alpha == 0) {
+        return;
+    }
+    const int ya = std::max(0, y0);
+    const int yb = std::min(height_ - 1, y1);
+    if (ya > yb) {
+        return;
+    }
+    for (int y = ya; y <= yb; ++y) {
+        blendAddSpan(y, x0, x1, color, alpha);
+    }
+}
+
 void FrameBuffer::copyRectFrom(const FrameBuffer& src, int srcX, int srcY, int w, int h,
                                int dstX, int dstY) {
     if (w <= 0 || h <= 0) {

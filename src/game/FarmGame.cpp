@@ -146,14 +146,30 @@ int runFarmGame() {
     int mouseX = 0;
     int mouseY = 0;
     bool mouseSeen = false;
+    bool timeScrubbing = false;
 
     window.setOnMouseMove([&](double x, double y, int) {
         mouseX = static_cast<int>(x);
         mouseY = static_cast<int>(y);
         mouseSeen = true;
+        if (timeScrubbing) {
+            // 拖出窗口外就结束拖拽，避免松开时收不到事件、时间一直冻住
+            if (mouseX < 0 || mouseY < 0 || mouseX >= fb.width() || mouseY >= fb.height()) {
+                timeScrubbing = false;
+                world.endTimeScrub();
+                return;
+            }
+            const IPoint m = toCam(mouseX, mouseY);
+            world.scrubTimeTo(timeFromTrackX(static_cast<float>(m.x), fit.viewW));
+        }
     });
 
     window.setOnMouseButton([&](int button, int action, int) {
+        if (button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_RELEASE && timeScrubbing) {
+            timeScrubbing = false;
+            world.endTimeScrub();
+            return;
+        }
         if (action != GLFW_PRESS) {
             return;
         }
@@ -166,6 +182,13 @@ int runFarmGame() {
         }
 
         const IPoint m = toCam(mouseX, mouseY);
+        // 时间轴：在轨道上下 8px 内按下即进入拖拽，横向位置直接映射到 0-24 点。
+        if (timeTrackRect(fit.viewW).inflated(8).contains(m)) {
+            timeScrubbing = true;
+            world.beginTimeScrub();
+            world.scrubTimeTo(timeFromTrackX(static_cast<float>(m.x), fit.viewW));
+            return;
+        }
         if (inHud(m, fit.viewW, fit.viewH)) {
             for (int i = 0; i < 3; ++i) {
                 if (hotbarSlotRect(i, fit.viewW, fit.viewH).inflated(4).contains(m)) {
@@ -224,6 +247,16 @@ int runFarmGame() {
         window.pollEvents();
     }
     return 0;
+}
+
+bool writeDragonSheet() {
+    FarmRender render;
+    const FrameBuffer sheet = render.captureDragonSheet();
+    if (!cg::writePPM("dragon-sheet.ppm", sheet)) {
+        return false;
+    }
+    std::cout << "[game] 已写出 dragon-sheet.ppm（6 造型 × 站立/走路）" << std::endl;
+    return true;
 }
 
 bool writeFarmCapture() {
@@ -302,6 +335,22 @@ bool writeFarmCapture() {
     for (const auto& f : dayFrames) {
         world.debugSetTime(f.hour);
         world.debugSetPlayerCell(16, 15);
+        render.frame(view, world, true);
+        if (!cg::writePPM(f.name, view)) {
+            return false;
+        }
+    }
+
+    // 水面碎光：同一镜头在黄昏与深夜各一张，光斑位置随光源方位横移。
+    // 站到栈道尽头，镜头才带得到完整的池塘。
+    world.debugSetPlayerCell(kDockTipCol - 1, kDockTipRow);
+    const struct {
+        float hour;
+        const char* name;
+    } glintFrames[] = {{17.8f, "game-pond-dusk.ppm"},
+                       {22.0f, "game-pond-night.ppm"}};
+    for (const auto& f : glintFrames) {
+        world.debugSetTime(f.hour);
         render.frame(view, world, true);
         if (!cg::writePPM(f.name, view)) {
             return false;

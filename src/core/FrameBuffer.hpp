@@ -1,6 +1,7 @@
 // FrameBuffer.hpp — CPU 像素画板；putPixel 是全项目唯一的画点入口。
 #pragma once
 #include "core/Color.hpp"
+#include <algorithm>
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
@@ -72,6 +73,25 @@ public:
                      static_cast<std::uint8_t>((v >> 16) & 0xFFu)};
     }
 
+    // 加色画点（自发光）：dst = min(255, dst + src*α/255)，只加不减。
+    // 萤火虫、水面碎光、灯晕这类"光源"用它；与 src-over 的半透明是两回事。
+    void blendAddPixel(int x, int y, const Color& color, std::uint8_t alpha) {
+        assertSizeInvariant();
+        if (x < 0 || x >= width_ || y < 0 || y >= height_ || alpha == 0) {
+            return;
+        }
+        const std::size_t i = static_cast<std::size_t>(y) * static_cast<std::size_t>(width_) +
+                              static_cast<std::size_t>(x);
+        const std::uint32_t d = pixels_[i];
+        const std::uint32_t a = alpha;
+        const std::uint32_t r = std::min<std::uint32_t>(255u, (d & 0xFFu) + color.r * a / 255u);
+        const std::uint32_t g =
+            std::min<std::uint32_t>(255u, ((d >> 8) & 0xFFu) + color.g * a / 255u);
+        const std::uint32_t b =
+            std::min<std::uint32_t>(255u, ((d >> 16) & 0xFFu) + color.b * a / 255u);
+        pixels_[i] = r | (g << 8) | (b << 16) | (0xFFu << 24);
+    }
+
     // 填充闭区间矩形 [x0,x1]×[y0,y1]，自动夹边界。
     void fillRect(int x0, int y0, int x1, int y1, const Color& color);
 
@@ -83,6 +103,12 @@ public:
 
     // 半透明矩形，自动夹边界。
     void blendRect(int x0, int y0, int x1, int y1, const Color& color, std::uint8_t alpha);
+
+    // 加色整行：dst = min(255, dst + src*α/255)。
+    void blendAddSpan(int y, int x0, int x1, const Color& color, std::uint8_t alpha);
+
+    // 加色矩形，自动夹边界。
+    void blendAddRect(int x0, int y0, int x1, int y1, const Color& color, std::uint8_t alpha);
 
     // 整行拷贝（闭区间，自动夹边界）。
     void copySpanFrom(const FrameBuffer& src, int y, int x0, int x1);

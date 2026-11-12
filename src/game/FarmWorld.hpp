@@ -183,6 +183,12 @@ public:
     void debugAddInventory(int kind, int count);
     // 直接把时刻拨到指定小时（测试/出图用），不影响天数。
     void debugSetTime(float hour);
+    // 时间轴拖拽：按下时冻结 dayTime_ 推进（作物/钓鱼照常走），拖动只改时刻，
+    // 松手恢复计时。演示昼夜时不必干等 240 秒一轮。
+    void beginTimeScrub();
+    void scrubTimeTo(float hour); // 0-24，越界回绕
+    void endTimeScrub();
+    bool timeScrubbing() const { return timeScrub_; }
     // 直接把场景拨到室内（出图用）；正式流程走门交互的转场。
     void debugEnterCabin();
 
@@ -235,6 +241,7 @@ private:
 
     float dayTime_ = 70.0f; // 7:00 起床干活
     int day_ = 1;
+    bool timeScrub_ = false; // 时间轴按住时为真：dayTime_ 不随 dt 推进
 
     GameScene scene_ = GameScene::Farm;
     SceneTransition transition_ = SceneTransition::None;

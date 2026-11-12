@@ -34,6 +34,9 @@ public:
     // 分层累计帧：草地、土路、农田、池塘与栈道、花草石头、树木，共 6 张。
     std::vector<FrameBuffer> captureLayers(const FarmWorld& world) const;
 
+    // 角色造型候选对照图：6 个造型 × 站立/走路两种姿态，供选型用。
+    FrameBuffer captureDragonSheet() const;
+
 private:
     // 农田层：在农田土台附近的小矩形里重画 草地+土路+农田，再盖回大背景。
     void bakeFarmLayer(const FarmWorld& world);
