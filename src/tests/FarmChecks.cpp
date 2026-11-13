@@ -141,6 +141,8 @@ int runFarmChecks() {
            "game: 未到位不执行动作");
 
     // 钓鱼状态机：抛竿 → 等待 → 咬钩 → 超时脱钩
+    expect(FarmWorld::kBiteWindow >= 2.0f && FarmWorld::kBiteWindow <= 3.0f,
+           "game: 咬钩确认窗口在 2~3 秒");
     world.debugSetPlayerCell(kDockTipCol, kDockTipRow);
     world.onClick({kPondCx, kPondCy + 80.0f});
     expect(world.fishState() == FishState::Casting, "game: 到栈道尽头即抛竿");
@@ -151,7 +153,9 @@ int runFarmChecks() {
     runFor(world.fishWaitSeconds() + 0.1f);
     expect(world.fishState() == FishState::Biting, "game: 等待结束进入咬钩");
     runFor(1.0f);
-    expect(world.fishState() == FishState::Missed, "game: 0.8 秒窗口超时判脱钩");
+    expect(world.fishState() == FishState::Biting, "game: 咬钩 1 秒后仍在确认窗口");
+    runFor(1.6f);
+    expect(world.fishState() == FishState::Missed, "game: 2.5 秒窗口超时判脱钩");
     runFor(1.1f);
     expect(world.fishState() == FishState::Idle, "game: 脱钩 1 秒后回空闲");
 

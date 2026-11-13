@@ -17,7 +17,8 @@ bool parseResolutionText(const std::string& text, int& width, int& height);
 // 把配置值夹到合法窗口范围 [800×600, maxW×maxH]：低于下限 HUD 放不下。
 FarmResolution clampResolution(int width, int height, int maxW, int maxH);
 
-// 读工作目录的 resolution.txt，上限取主显示器分辨率；仅窗口模式用。
+// 依次在工作目录 / 可执行文件同级 / 其上级目录查找 resolution.txt，
+// 上限取主显示器分辨率；仅窗口模式用。
 FarmResolution loadResolutionFile();
 
 // 启动农场窗口，返回进程退出码。

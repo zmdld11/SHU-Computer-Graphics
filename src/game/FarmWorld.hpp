@@ -118,7 +118,7 @@ class FarmWorld {
 public:
     static constexpr float kPlayerSpeed = 220.0f;
     static constexpr float kCastTime = 0.5f;
-    static constexpr float kBiteWindow = 0.8f;
+    static constexpr float kBiteWindow = 2.5f; // 上钩后的确认窗口：2~3 秒内点击都算提竿
     static constexpr float kFishTailTime = 1.0f;
     static constexpr int kMaxParticles = 256;
     static constexpr float kDayLength = 240.0f; // 一个游戏日 = 现实 240 秒

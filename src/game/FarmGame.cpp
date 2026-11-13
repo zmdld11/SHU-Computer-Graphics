@@ -10,14 +10,23 @@
 #include "game/FarmWorld.hpp"
 #include "ui/Window.hpp"
 
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX // 下面要 include <windows.h> 取 exe 路径，别让 min/max 宏漏出去
+#endif
+#include <windows.h>
+#endif
+
 #include <GLFW/glfw3.h>
 #include <algorithm>
 #include <chrono>
 #include <cstddef>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <sstream>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace cg::game {
@@ -60,11 +69,89 @@ FarmResolution clampResolution(int width, int height, int maxW, int maxH) {
     return r;
 }
 
+namespace {
+
+// 可执行文件所在目录：CLion / 资源管理器启动时工作目录不一定是仓库根，配置得按 exe 再找一遍。
+std::filesystem::path executableDir() {
+#ifdef _WIN32
+    std::wstring buf(MAX_PATH, L'\0');
+    for (;;) {
+        const DWORD n =
+            GetModuleFileNameW(nullptr, buf.data(), static_cast<DWORD>(buf.size()));
+        if (n == 0) {
+            return {};
+        }
+        if (n < buf.size()) {
+            buf.resize(n);
+            return std::filesystem::path(buf).parent_path();
+        }
+        buf.resize(buf.size() * 2); // 路径超过缓冲长度：翻倍重试
+    }
+#else
+    return {};
+#endif
+}
+
+struct ResolutionCandidate {
+    std::filesystem::path path; // 已绝对化、规范化
+    std::string origin;         // 命中位置，纯 ASCII，避免 GBK 控制台乱码
+};
+
+// 查找顺序：cwd → exe 同级 → exe 上级（最多 4 层），同路径去重。
+std::vector<ResolutionCandidate> resolutionCandidates() {
+    std::vector<ResolutionCandidate> out;
+    auto add = [&out](const std::filesystem::path& path, std::string origin) {
+        std::error_code ec;
+        std::filesystem::path key = std::filesystem::absolute(path, ec);
+        if (ec) {
+            key = path;
+        }
+        key = key.lexically_normal();
+        for (const ResolutionCandidate& c : out) {
+            if (c.path == key) {
+                return;
+            }
+        }
+        out.push_back({key, std::move(origin)});
+    };
+
+    std::error_code ec;
+    const std::filesystem::path cwd = std::filesystem::current_path(ec);
+    if (!ec) {
+        add(cwd / "resolution.txt", "cwd");
+    }
+    std::filesystem::path dir = executableDir();
+    for (int depth = 0; depth < 5 && !dir.empty(); ++depth) {
+        add(dir / "resolution.txt",
+            depth == 0 ? std::string("exe dir")
+                       : "exe parent " + std::to_string(depth));
+        const std::filesystem::path parent = dir.parent_path();
+        if (parent == dir) {
+            break;
+        }
+        dir = parent;
+    }
+    return out;
+}
+
+} // namespace
+
 FarmResolution loadResolutionFile() {
     FarmResolution r;
-    std::ifstream in("resolution.txt");
+    std::ifstream in;
+    std::string origin;
+    for (const ResolutionCandidate& c : resolutionCandidates()) {
+        std::ifstream probe(c.path);
+        if (probe) {
+            in = std::move(probe);
+            origin = c.origin;
+            break;
+        }
+    }
     if (!in) {
-        std::cout << "[game] 未找到 resolution.txt，使用默认 800x600" << std::endl;
+        std::cout << "[game] resolution.txt not found (cwd / exe dir / parents); "
+                     "using 800x600"
+                  << std::endl;
         return r;
     }
     std::stringstream buffer;
@@ -72,7 +159,8 @@ FarmResolution loadResolutionFile() {
     int w = 0;
     int h = 0;
     if (!parseResolutionText(buffer.str(), w, h)) {
-        std::cout << "[game] resolution.txt 内容无效，使用默认 800x600" << std::endl;
+        std::cout << "[game] resolution.txt (" << origin
+                  << ") is invalid; using 800x600" << std::endl;
         return r;
     }
     // 上限夹到主显示器当前分辨率，避免窗口开得比屏幕还大
@@ -85,7 +173,8 @@ FarmResolution loadResolutionFile() {
         }
     }
     r = clampResolution(w, h, maxW, maxH);
-    std::cout << "[game] resolution.txt: " << r.width << "x" << r.height << std::endl;
+    std::cout << "[game] resolution.txt (" << origin << "): " << r.width << "x"
+              << r.height << std::endl;
     return r;
 }
 
@@ -96,10 +185,12 @@ int runFarmGame() {
     const ViewportFit fit0 = fitViewport(res.width, res.height);
     world.setViewport(fit0.viewW, fit0.viewH);
 
-    std::cout << "[game] 正在烘焙地图（2x 超采样）..." << std::endl;
+    std::cout << "[game] baking map (2x supersampling)..." << std::endl;
     FarmRender render;
     render.build(world);
-    std::cout << "[game] 地图就绪，左键点地面移动，右键取消，1/2/3 选种子，R 重开" << std::endl;
+    std::cout << "[game] map ready: LMB ground=move, RMB=cancel, 1/2/3=seed, "
+                 "R=restart"
+              << std::endl;
 
     Window window(res.width, res.height, "胖龙农场 - 左键移动", false);
     if (!window.valid()) {
@@ -261,7 +352,7 @@ bool writeDragonSheet() {
     if (!cg::writePPM("dragon-sheet.ppm", sheet)) {
         return false;
     }
-    std::cout << "[game] 已写出 dragon-sheet.ppm（6 造型 × 站立/走路）" << std::endl;
+    std::cout << "[game] wrote dragon-sheet.ppm (6 variants x idle/walk)" << std::endl;
     return true;
 }
 
@@ -307,7 +398,7 @@ bool writeFarmCapture() {
 
     world.debugSetPlayerCell(kDockTipCol - 1, kDockRow);
 
-    std::cout << "[game] 正在渲染美术预览..." << std::endl;
+    std::cout << "[game] rendering art preview..." << std::endl;
     FarmRender render;
     render.build(world);
 
@@ -403,7 +494,7 @@ bool writeFarmCapture() {
         return false;
     }
 
-    std::cout << "[game] 已写出 game-background.ppm / game-layer-1..6.ppm / "
+    std::cout << "[game] wrote game-background.ppm / game-layer-1..6.ppm / "
                  "game-world.ppm / game-pond.ppm / game-farm.ppm / "
                  "game-day-0612|1230|1748 / game-night-2300.ppm / "
                  "game-fx-watering|harvest|cast.ppm / game-cabin-day|night.ppm"
