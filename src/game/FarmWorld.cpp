@@ -234,10 +234,8 @@ void FarmWorld::update(float dt) {
     animTime_ += dt;
     updateParticles(dt);
 
-    // 胜利后冻结世界，只保留粒子收尾，等待 R 重开。
-    if (won_) {
-        return;
-    }
+    // 订单集齐只标记完成，不结束游戏：时间、作物、钓鱼和输入全部照常，
+    // 玩家可以继续种田钓鱼，随时点右下角按钮或按 R 重开。
     playSeconds_ += dt;
     if (!timeScrub_) { // 拖时间轴时时刻本身冻结，作物与钓鱼仍按 dt 推进
         dayTime_ += dt;
@@ -467,8 +465,7 @@ void FarmWorld::clearHover() {
 
 void FarmWorld::onClick(FPoint worldPos) {
     if (worldPos.x < 0.0f || worldPos.y < 0.0f || worldPos.x >= worldWidth() ||
-        worldPos.y >= worldHeight() || won_ ||
-        transition_ != SceneTransition::None) {
+        worldPos.y >= worldHeight() || transition_ != SceneTransition::None) {
         return;
     }
 

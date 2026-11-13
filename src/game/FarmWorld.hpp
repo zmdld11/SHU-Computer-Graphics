@@ -150,6 +150,7 @@ public:
     // 玩法状态：农田层版本号（渲染层据此重烘农田）、库存、订单、用时。
     std::uint64_t farmVersion() const { return farmVersion_; }
     const Inventory& inventory() const { return inventory_; }
+    // 订单四项是否都已集齐。只作展示：完成后游戏继续，不再冻结/结算。
     bool won() const { return won_; }
     float playSeconds() const { return playSeconds_; }
 
@@ -179,7 +180,7 @@ public:
     // 预览图/测试用：直接摆一块田/把角色放到指定格，不影响正常流程。
     void debugPlant(int plotIndex, Seed kind, CropStage stage, bool watered = false);
     void debugSetPlayerCell(int col, int row);
-    // kind：0/1/2 = 三种作物，3 = 鱼。测试订单胜利用。
+    // kind：0/1/2 = 三种作物，3 = 鱼。测试订单完成用。
     void debugAddInventory(int kind, int count);
     // 直接把时刻拨到指定小时（测试/出图用），不影响天数。
     void debugSetTime(float hour);

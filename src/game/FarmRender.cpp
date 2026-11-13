@@ -694,10 +694,18 @@ void drawLilyPad(Painter& p, float x, float y, float r, const Color& water, bool
     }
 }
 
-// B 样条在任意参数 u 处的点：直接调 Cox-de Boor 基函数求和。
+// 闭合 B 样条在任意参数 u 处的点：直接调 Cox-de Boor 基函数求和。
 // sampleBSpline 只能均匀采样一串点，锦鲤要按相位取任意 u，所以在这里用基函数。
-FPoint evalBSplineAt(const std::vector<FPoint>& cps, int degree, float u) {
-    const std::vector<float> knots = curves::clampedKnots(static_cast<int>(cps.size()), degree);
+// 关键是用**均匀节点**：控制点周期延拓后，u=0 与 u=1 求值落在同一点
+// （(P0+4P1+P2)/6），且切线连续。此前用 clamped 节点，曲线在 u=1 固定到
+// 最后一个控制点上——而末尾重复的是第 3 个控制点，于是每圈都会跳回起点。
+FPoint evalClosedBSplineAt(const std::vector<FPoint>& cps, int degree, float u) {
+    const std::vector<float> knots =
+        curves::uniformKnots(static_cast<int>(cps.size()), degree);
+    u = std::clamp(u, 0.0f, 1.0f);
+    if (u >= 1.0f) {
+        u = 1.0f - 1e-6f; // 均匀节点在右端点两段同时命中，取左极限逼近闭合点
+    }
     FPoint sum{0.0f, 0.0f};
     for (std::size_t i = 0; i < cps.size(); ++i) {
         const float b = curves::bsplineBasis(static_cast<int>(i), degree, u, knots);
@@ -707,9 +715,10 @@ FPoint evalBSplineAt(const std::vector<FPoint>& cps, int degree, float u) {
     return sum;
 }
 
-// 三条锦鲤：每条一个环形控制多边形（8 点绕池塘一圈），末尾重复前 3 个控制点，
-// 让 clamped 三次 B 样条首尾接上、闭合且切线连续。位置取当前相位的 u，
-// 朝向取 u±ε 两点的切线；鱼身/尾鳍在局部坐标里定义后按切线角旋转。
+// 三条锦鲤：每条一个环形控制多边形（8 点绕池塘一圈），末尾再追前 3 个点，
+// 把控制多边形周期延拓；配均匀节点得到首尾相接、切线连续的闭合三次 B 样条。
+// 位置取当前相位的 u，朝向取 u±ε 两点的切线；鱼身/尾鳍在局部坐标里定义后
+// 按切线角旋转。
 void drawKoi(Painter& p, const FarmWorld& world, float camX, float camY) {
     struct KoiSpec {
         float rx;    // 控制多边形的半宽（相对池塘半径）
@@ -738,13 +747,13 @@ void drawKoi(Painter& p, const FarmWorld& world, float camX, float camY) {
             ctrl.push_back({kPondCx + std::cos(a) * kPondRx * spec.rx * wob,
                             kPondCy + std::sin(a) * kPondRy * spec.ry * wob});
         }
-        for (int i = 0; i < 3; ++i) { // 重复前 3 点闭合曲线
+        for (int i = 0; i < 3; ++i) { // 周期延拓：把前 3 点追到末尾
             ctrl.push_back(ctrl[static_cast<std::size_t>(i)]);
         }
 
         const float u = std::fmod(world.animTime() * spec.speed + spec.phase, 1.0f);
-        const FPoint head = evalBSplineAt(ctrl, 3, u);
-        const FPoint ahead = evalBSplineAt(ctrl, 3, std::fmod(u + 0.004f, 1.0f));
+        const FPoint head = evalClosedBSplineAt(ctrl, 3, u);
+        const FPoint ahead = evalClosedBSplineAt(ctrl, 3, std::fmod(u + 0.004f, 1.0f));
         const float dx = ahead.x - head.x;
         const float dy = ahead.y - head.y;
         if (std::fabs(dx) + std::fabs(dy) < 1e-4f) {
@@ -821,10 +830,15 @@ void drawDock(Painter& p) {
     }
 
     // 栈道尽头的小灯：暖色一点，给池塘一个视觉落点。
-    p.line(1014.0f, 626.0f, 1014.0f, 598.0f, kWoodDark, 4.0f);
-    p.ellipse(1014.0f, 593.0f, 7.5f, 8.5f, Color(58, 42, 28), 18);
-    p.ellipse(1014.0f, 593.0f, 5.3f, 6.0f, Color(250, 204, 90), 18);
-    p.ellipse(1012.5f, 590.5f, 1.8f, 2.2f, kCream, 10);
+    p.line(static_cast<float>(kDockLampX), static_cast<float>(kDockY + kDockH - 46),
+           static_cast<float>(kDockLampX), static_cast<float>(kDockY - 10), kWoodDark,
+           4.0f);
+    p.ellipse(static_cast<float>(kDockLampX), static_cast<float>(kDockLampY), 7.5f, 8.5f,
+              Color(58, 42, 28), 18);
+    p.ellipse(static_cast<float>(kDockLampX), static_cast<float>(kDockLampY), 5.3f, 6.0f,
+              Color(250, 204, 90), 18);
+    p.ellipse(static_cast<float>(kDockLampX) - 1.5f, static_cast<float>(kDockLampY) - 2.5f,
+              1.8f, 2.2f, kCream, 10);
 }
 
 void drawPond(Painter& p) {
@@ -1125,7 +1139,7 @@ void drawScene(Painter& p, const FarmWorld& world) {
 //   腮红靠外；身体宽扁无脖子、两侧露出来；手脚短粗；
 //   尾巴从身体内部起笔、由粗到细（二次贝塞尔扫出的带状多边形），不悬浮。
 
-constexpr int kDragonVariant = 1; // 1 奶蛋 2 奶龙 3 奶鼠 4 奶娃 5 奶兔 6 奶猫（选定 1）
+constexpr int kDragonVariant = 2; // 1 奶蛋 2 奶龙 3 奶鼠 4 奶娃 5 奶兔 6 奶猫（项目名胖龙农场，选定 2）
 
 // 一双大眼睛：眼白 + 大虹膜 + 左上高光 + 右下反光。
 // rim 用头部色的深色版而不是纯黑，边缘才不会像贴了两枚纽扣。
@@ -1557,7 +1571,6 @@ void drawHover(Painter& p, const Hover& h, float camX, float camY, float time) {
 // ---------------- HUD ----------------
 
 void drawOrderBoard(Painter& p, const FarmWorld& world, int viewW);
-void drawWonPanel(Painter& p, const FarmWorld& world, int viewW, int viewH);
 
 void drawSeedIcon(Painter& p, int kind, FPoint c) {
     if (kind == 0) {
@@ -1723,6 +1736,20 @@ void drawHud(Painter& p, const FarmWorld& world, int viewW, int viewH) {
     }
 
     drawFishingHint(p, world, viewW, viewH);
+
+    // 右下角常驻重开按钮：订单完成后游戏不结束，随时可以开新一局。
+    const RectI rb = restartButtonRect(viewW, viewH);
+    p.rect(static_cast<float>(rb.x + 3), static_cast<float>(rb.y + 4),
+           static_cast<float>(rb.w), static_cast<float>(rb.h), Color(48, 36, 24), 140);
+    p.rect(static_cast<float>(rb.x), static_cast<float>(rb.y), static_cast<float>(rb.w),
+           static_cast<float>(rb.h), kOutline);
+    p.rect(static_cast<float>(rb.x + 2), static_cast<float>(rb.y + 2),
+           static_cast<float>(rb.w - 4), static_cast<float>(rb.h - 4), kWood);
+    p.rect(static_cast<float>(rb.x + 5), static_cast<float>(rb.y + 5),
+           static_cast<float>(rb.w - 10), 2.0f, kWoodLight);
+    const char* restartLabel = "重开 R";
+    text::drawText(p.fb(), rb.x + (rb.w - text::textWidth(restartLabel)) / 2, rb.y + 9,
+                   restartLabel, kCream);
 }
 
 // ---------------- 钓鱼与粒子 ----------------
@@ -1842,7 +1869,7 @@ void drawChimneySmoke(Painter& p, const FarmWorld& world, float camX, float camY
     }
 }
 
-// ---------------- 订单板与胜利面板 ----------------
+// ---------------- 订单板 ----------------
 
 void drawMiniIcon(Painter& p, int kind, float cx, float cy) {
     switch (kind) {
@@ -1907,49 +1934,27 @@ void drawOrderBoard(Painter& p, const FarmWorld& world, int viewW) {
         y += 26;
     }
 
+    // 任务全部完成后在清单正下方标一行状态；不弹结算面板、不结束游戏。
+    if (world.won()) {
+        text::drawText(p.fb(), b.x + 12, y + 2, "全部任务已完成",
+                       Color(134, 196, 108));
+    }
+
     const int total = static_cast<int>(world.playSeconds());
     char t[16];
     std::snprintf(t, sizeof(t), "%02d:%02d", total / 60, total % 60);
-    text::drawText(p.fb(), b.x + 12, y + 2, t, kCream);
-}
-
-void drawWonPanel(Painter& p, const FarmWorld& world, int viewW, int viewH) {
-    const int w = 400;
-    const int h = 180;
-    const int x = viewW / 2 - w / 2;
-    const int y = viewH / 2 - h / 2 - 30;
-    // 有了 alpha 混合，胜利面板压一层半透明暗幕 + 半透明木底，不再死板。
-    p.fb().blendRect(0, 0, viewW - 1, viewH - 1, Color(10, 14, 10), 110);
-    p.rect(static_cast<float>(x + 6), static_cast<float>(y + 8), static_cast<float>(w),
-           static_cast<float>(h), Color(40, 54, 34), 150);
-    p.rect(static_cast<float>(x), static_cast<float>(y), static_cast<float>(w),
-           static_cast<float>(h), kOutline);
-    p.rect(static_cast<float>(x + 3), static_cast<float>(y + 3),
-           static_cast<float>(w - 6), static_cast<float>(h - 6), kWood, 225);
-    p.rect(static_cast<float>(x + 8), static_cast<float>(y + 8),
-           static_cast<float>(w - 16), static_cast<float>(h - 16),
-           Color(238, 226, 196), 235);
-
-    const char* title = "订单完成！";
-    text::drawText(p.fb(), x + (w - text::textWidth(title)) / 2, y + 30, title, kOutline);
-    const int total = static_cast<int>(world.playSeconds());
-    char t[32];
-    std::snprintf(t, sizeof(t), "用时 %02d:%02d", total / 60, total % 60);
-    text::drawText(p.fb(), x + (w - text::textWidth(t)) / 2, y + 82, t,
-                   Color(96, 72, 44));
-    const char* hint = "按 R 重开";
-    text::drawText(p.fb(), x + (w - text::textWidth(hint)) / 2, y + 122, hint,
-                   Color(96, 72, 44));
+    text::drawText(p.fb(), b.x + 12, y + 30, t, kCream);
 }
 
 // ---------------- 昼夜光照：影子 / 环境色 / 灯光 ----------------
 
 constexpr Color kShadowTint{18, 22, 14};
 
-// 路灯（点光源）的影子：从灯位向外投射的四边形本影近似。
-// 基座两点撑开、远端收窄，长度随物体高度和到灯距离变化，每帧重算。
+// 路灯（点光源）的影子：沿背离灯的方向拉长的椭圆投影，和太阳影的椭圆同一套
+// 观感——近端落在根部、中段最宽、远端渐收。长度随物体高度和到灯距离变化，
+// 每帧重算。此前用四边形近似，近宽远窄的直边在夜里像一块梯形板。
 // lampX/lampY 必须与 baseX/baseY 同一坐标系（视口坐标），否则镜头一动影子就偏。
-void lampShadowQuad(Painter& p, float baseX, float baseY, float lampX, float lampY,
+void lampShadowBlob(Painter& p, float baseX, float baseY, float lampX, float lampY,
                     float radius, float height, std::uint8_t alpha) {
     const float dx = baseX - lampX;
     const float dy = baseY - lampY;
@@ -1960,17 +1965,22 @@ void lampShadowQuad(Painter& p, float baseX, float baseY, float lampX, float lam
     const float ux = dx / dist;
     const float uy = dy / dist;
     const float len = std::clamp(radius + height * (0.9f + dist * 0.0035f), 40.0f, 340.0f);
-    const float ex = baseX + ux * len;
-    const float ey = baseY + uy * len;
-    const float px = -uy;
-    const float py = ux;
-    const float wr = radius * 0.9f;
-    const float wf = radius * 0.32f;
-    const std::vector<FPoint> quad = {{baseX + px * wr, baseY + py * wr},
-                                      {baseX - px * wr, baseY - py * wr},
-                                      {ex - px * wf, ey - py * wf},
-                                      {ex + px * wf, ey + py * wf}};
-    p.polygon(quad, kShadowTint, kShadowTint, 0.0f, alpha);
+    // 椭圆长轴从根部指向外，中心放在 len 的一半处，近端正好贴在基座上。
+    const float cx = baseX + ux * len * 0.5f;
+    const float cy = baseY + uy * len * 0.5f;
+    const float semiU = len * 0.5f;
+    const float semiV = radius * 0.72f;
+    constexpr int kSegments = 24;
+    std::vector<FPoint> pts;
+    pts.reserve(kSegments);
+    for (int i = 0; i < kSegments; ++i) {
+        const float a =
+            2.0f * kPi * static_cast<float>(i) / static_cast<float>(kSegments);
+        const float fwd = std::cos(a) * semiU;
+        const float side = std::sin(a) * semiV;
+        pts.push_back({cx + ux * fwd - uy * side, cy + uy * fwd + ux * side});
+    }
+    p.polygon(pts, kShadowTint, kShadowTint, 0.0f, alpha);
 }
 
 // 胖龙的剪影影子：先把剪影以不透明色画进离屏蒙版，再以统一 alpha 盖到主画布。
@@ -2069,7 +2079,7 @@ void drawShadows(Painter& p, const FarmWorld& world, float camX, float camY,
                       kShadowTint, 26, sunA);
         }
         if (lampA > 0) {
-            lampShadowQuad(p, x, y, lampVX, lampVY, 34.0f * t.scale, h, lampA);
+            lampShadowBlob(p, x, y, lampVX, lampVY, 34.0f * t.scale, h, lampA);
         }
     }
     // 灌木
@@ -2085,7 +2095,7 @@ void drawShadows(Painter& p, const FarmWorld& world, float camX, float camY,
                       20, sunA);
         }
         if (lampA > 0) {
-            lampShadowQuad(p, x, y, lampVX, lampVY, 15.0f * b[2], h, lampA);
+            lampShadowBlob(p, x, y, lampVX, lampVY, 15.0f * b[2], h, lampA);
         }
     }
     // 作物：田里长出来的都投一点影子，成熟期最高。
@@ -2102,7 +2112,7 @@ void drawShadows(Painter& p, const FarmWorld& world, float camX, float camY,
             p.ellipse(x + sv.x * h, y + sv.y * h, 17.0f, 5.5f, kShadowTint, 18, sunA);
         }
         if (lampA > 0) {
-            lampShadowQuad(p, x, y, lampVX, lampVY, 12.0f, h, lampA);
+            lampShadowBlob(p, x, y, lampVX, lampVY, 12.0f, h, lampA);
         }
     }
     // 木桶
@@ -2114,7 +2124,7 @@ void drawShadows(Painter& p, const FarmWorld& world, float camX, float camY,
                       sunA);
         }
         if (lampA > 0) {
-            lampShadowQuad(p, x, y, lampVX, lampVY, 9.0f, 20.0f, lampA);
+            lampShadowBlob(p, x, y, lampVX, lampVY, 9.0f, 20.0f, lampA);
         }
     }
     // 胖龙：影子就是龙的剪影（离屏蒙版统一透明度盖章），以脚跟为锚做地面投影：
@@ -2628,6 +2638,14 @@ void FarmRender::frame(FrameBuffer& fb, const FarmWorld& world, bool hud) {
         // 水面波纹与炊烟：环境动画，画在背景之上、实体之下。
         drawPondShimmer(p, world, static_cast<float>(camX), static_cast<float>(camY));
         drawWaterGlint(p, world, static_cast<float>(camX), static_cast<float>(camY));
+        // 栈道是水面之上的实体：鱼和水纹画完后，把烘焙背景里的桥面按相机
+        // 位置原样盖回来——锦鲤从桥下游过时被桥板挡住，而不是浮在桥面上。
+        fb.copyRectFrom(background_, kDockX, kDockY, kDockW, kDockH, kDockX - camX,
+                        kDockY - camY);
+        // 桥头小灯的灯柱伸到水面上方，灯头这块也一并盖回（±8×10 的包围盒）。
+        fb.copyRectFrom(background_, kDockLampX - 8, kDockLampY - 10, 16,
+                        kDockY - (kDockLampY - 10), kDockLampX - 8 - camX,
+                        kDockLampY - 10 - camY);
         drawChimneySmoke(p, world, static_cast<float>(camX), static_cast<float>(camY));
 
         // 影子最先画（贴着背景），晨昏时太阳与路灯两套影子同时出现。
@@ -2653,9 +2671,6 @@ void FarmRender::frame(FrameBuffer& fb, const FarmWorld& world, bool hud) {
     if (hud) {
         drawHud(p, world, fb.width(), fb.height());
         drawTimeBar(p, world, fb.width());
-        if (world.won()) {
-            drawWonPanel(p, world, fb.width(), fb.height());
-        }
     }
 
     // 转场渐变压在最上层：0.5s 渐黑（中点切场景/跳时间）+ 0.5s 渐亮。
@@ -2671,6 +2686,7 @@ FrameBuffer FarmRender::captureWorld(const FarmWorld& world) const {
     Painter p(hi, 2.0f);
     drawScene(p, world);
     drawKoi(p, world, 0.0f, 0.0f); // 整图导出也带上锦鲤（固定相位）
+    drawDock(p);                   // 桥面盖回鱼上，和运行时图层一致
     drawDragon(p, world.playerPos(), false, 0.0f, 0.0f, world.facing());
     FrameBuffer out(kWorldW, kWorldH);
     downsample2x(hi, out);

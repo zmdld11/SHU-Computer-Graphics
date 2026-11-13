@@ -197,7 +197,7 @@ int runFarmChecks() {
     world.update(2.0f);
     expect(world.particles().empty(), "game: 粒子寿命结束回收");
 
-    // 订单与胜利
+    // 订单完成（完成后游戏继续）
     expect(!world.won(), "game: 开局未胜利");
     world.debugAddInventory(0, kOrderCabbage);
     expect(!world.won(), "game: 只齐白菜不算胜利");
@@ -205,9 +205,15 @@ int runFarmChecks() {
     world.debugAddInventory(2, kOrderCarrot);
     expect(!world.won(), "game: 缺鱼不算胜利");
     world.debugAddInventory(3, kOrderFish);
-    expect(world.won(), "game: 四项集齐判胜利");
+    expect(world.won(), "game: 四项集齐判订单完成");
+    // 订单完成后不弹结算面板、不冻结世界：时间照走，也能继续点地移动。
+    world.debugSetTime(12.0f);
+    const float orderHour = world.hour();
     world.update(0.5f);
-    expect(world.won(), "game: 胜利后世界冻结");
+    expect(world.hour() > orderHour, "game: 订单完成后时间继续走");
+    world.debugSetPlayerCell(kSpawnCol, kSpawnRow);
+    world.onClick({24 * kCell + 16.0f, 23 * kCell + 16.0f});
+    expect(!world.waypoints().empty(), "game: 订单完成后仍可移动");
 
     // 分层烘培一致性（结构性校验）：静态层 + 农田层与整图 drawScene 的差异
     // 必须全部落在农田重烘矩形内且数量极少。AET 增量累加的交点 x 依赖画布
@@ -268,7 +274,7 @@ int runFarmChecks() {
     ambientTintAt(18.3f, blue, warm);
     expect(blue.alpha > 0 && warm.alpha > 0, "day: 黄昏蓝橙两层叠加");
 
-    // 时间轴：随 update 推进，跨零点天数 +1；胜利后冻结。
+    // 时间轴：随 update 推进，跨零点天数 +1；订单完成后照常推进。
     world.reset();
     world.setViewport(800, 600);
     world.debugSetTime(23.9f);
@@ -285,11 +291,11 @@ int runFarmChecks() {
     world.debugAddInventory(1, kOrderTomato);
     world.debugAddInventory(2, kOrderCarrot);
     world.debugAddInventory(3, kOrderFish);
-    expect(world.won(), "day: 铺垫胜利");
+    expect(world.won(), "day: 铺垫订单完成");
     world.debugSetTime(12.0f);
-    const float frozenHour = world.hour();
+    const float resumeHour = world.hour();
     world.update(1.0f);
-    expect(world.hour() == frozenHour, "day: 胜利后时间冻结");
+    expect(world.hour() > resumeHour, "day: 订单完成后时间照常推进");
     world.reset();
     world.setViewport(800, 600);
 
@@ -297,6 +303,20 @@ int runFarmChecks() {
     expect(cabinWalkableCell(kCabinDoorCol, kCabinDoorRow), "cabin: 门垫可行走");
     expect(!cabinWalkableCell(5, 5), "cabin: 床位不可穿行");
     expect(!cabinWalkableCell(0, 8), "cabin: 侧墙不可穿行");
+    // 农场侧的小屋空气墙：占地格子不可走，门前那一格仍是进门交互点。
+    expect(!isWalkableCell(26, 6), "cabin: 小屋占地不可穿行");
+    expect(!isWalkableCell(24, 8), "cabin: 小屋侧墙不可穿行");
+    expect(isWalkableCell(kCabinFrontCol, kCabinFrontRow), "cabin: 门前格仍是进门点");
+    // 从屋子西侧走到东侧：BFS 必须从门前绕过去，路径拐点不得落在占地内。
+    world.debugSetPlayerCell(21, 8);
+    world.onClick({31 * kCell + 16.0f, 8 * kCell + 16.0f});
+    bool cabinDetour = !world.waypoints().empty();
+    for (const FPoint& p : world.waypoints()) {
+        if (inCabinFootprint(p.x, p.y)) {
+            cabinDetour = false;
+        }
+    }
+    expect(cabinDetour, "cabin: 绕小屋寻路不穿墙");
 
     // 点小屋 → 走到门前格 → 转场进室内，落在门垫上
     world.debugSetPlayerCell(kSpawnCol, kSpawnRow);

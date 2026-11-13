@@ -182,6 +182,12 @@ int runFarmGame() {
         }
 
         const IPoint m = toCam(mouseX, mouseY);
+        // 右下角常驻重开按钮：任何时候都能开新局（订单完成后游戏不结束）。
+        if (restartButtonRect(fit.viewW, fit.viewH).inflated(2).contains(m)) {
+            world.reset();
+            applyViewport(fb.width(), fb.height());
+            return;
+        }
         // 时间轴：在轨道上下 8px 内按下即进入拖拽，横向位置直接映射到 0-24 点。
         if (timeTrackRect(fit.viewW).inflated(8).contains(m)) {
             timeScrubbing = true;

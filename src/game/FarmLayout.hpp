@@ -96,6 +96,10 @@ constexpr int kDockH = kDockRows * kCell;
 constexpr int kDockTipCol = kDockCol + kDockCols - 1;
 constexpr int kDockTipRow = kDockRow + kDockRows - 1;
 
+// 栈道尽头的小灯：灯头在水面上方（y 小于桥面），鱼绕过桥头时也要被它遮住。
+constexpr int kDockLampX = 1014;
+constexpr int kDockLampY = 593; // 灯头中心
+
 constexpr int kSpawnCol = 20;
 constexpr int kSpawnRow = 20;
 
@@ -208,6 +212,13 @@ inline bool inDock(float x, float y) {
            y >= static_cast<float>(kDockY) && y < static_cast<float>(kDockY + kDockH);
 }
 
+// 小屋占地：屋里是实体，玩家不能穿屋而过（空气墙）；门前那一格在屋面
+// y = kCabinY + kCabinH 之下，不在占地内，仍是进门交互点。
+inline bool inCabinFootprint(float x, float y) {
+    return x >= kCabinX && x < kCabinX + kCabinW && y >= kCabinY &&
+           y < kCabinY + kCabinH;
+}
+
 inline bool inFarmApron(float x, float y) {
     return x >= kFarmApronX && x < kFarmApronX + kFarmApronW && y >= kFarmApronY &&
            y < kFarmApronY + kFarmApronH;
@@ -241,6 +252,9 @@ inline bool isWalkableCell(int col, int row) {
         return true;
     }
     const IPoint c = cellCenter(col, row);
+    if (inCabinFootprint(static_cast<float>(c.x), static_cast<float>(c.y))) {
+        return false; // 小屋是实体：不能穿墙，只能从门前那格进出
+    }
     return !inPond(static_cast<float>(c.x), static_cast<float>(c.y), 10.0f);
 }
 
@@ -293,9 +307,18 @@ inline RectI titlePlaqueRect() {
     return {18, 16, 154, 48};
 }
 
-// 右上角订单板：四行物品进度 + 一行用时。
+// 右上角订单板：四行物品进度 + 完成状态行 + 一行用时。
+// 订单集齐不再弹结算面板，只在任务清单下面标一行“全部任务已完成”。
 inline RectI orderBoardRect(int viewW) {
-    return {viewW - 214, 14, 198, 172};
+    return {viewW - 214, 14, 198, 198};
+}
+
+// 右下角常驻重开按钮：任何时候都能重开一局，不依赖键盘。
+constexpr int kRestartW = 88;
+constexpr int kRestartH = 34;
+
+inline RectI restartButtonRect(int viewW, int viewH) {
+    return {viewW - kRestartW - 18, viewH - kRestartH - 18, kRestartW, kRestartH};
 }
 
 // 顶部中央时间轴：时刻文字 + 24h 轨道 + 可拖拽旋钮。
@@ -333,6 +356,9 @@ inline bool inHud(IPoint p, int viewW, int viewH) {
         return true;
     }
     if (timeBarRect(viewW).contains(p)) {
+        return true;
+    }
+    if (restartButtonRect(viewW, viewH).inflated(2).contains(p)) {
         return true;
     }
     for (int i = 0; i < 3; ++i) {
