@@ -152,10 +152,10 @@ inline bool cabinWalkableCell(int col, int row) {
 constexpr int kCabinBedSideCol = 8;
 constexpr int kCabinBedSideRow = 5;
 
-// 订单需求：3 白菜 + 3 番茄 + 2 胡萝卜 + 3 鱼，集齐即胜利。
+// 订单需求：3 白菜 + 3 番茄 + 3 胡萝卜 + 3 鱼，集齐即标记完成。
 constexpr int kOrderCabbage = 3;
 constexpr int kOrderTomato = 3;
-constexpr int kOrderCarrot = 2;
+constexpr int kOrderCarrot = 3;
 constexpr int kOrderFish = 3;
 
 // HUD：3 个种子槽 + 左上角木牌 + 右上角订单板。渲染和鼠标命中测试共用。

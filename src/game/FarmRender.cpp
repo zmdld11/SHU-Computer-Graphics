@@ -103,6 +103,12 @@ Color lerpColor(const Color& a, const Color& b, float t) {
     return Color{mix(a.r, b.r), mix(a.g, b.g), mix(a.b, b.b)};
 }
 
+// 平滑阶跃（Hermite）：[e0,e1] 映射到 0..1，两端导数为 0，用来做影子的淡入淡出。
+float smoothStep(float e0, float e1, float x) {
+    const float t = std::clamp((x - e0) / (e1 - e0), 0.0f, 1.0f);
+    return t * t * (3.0f - 2.0f * t);
+}
+
 // 带缩放与偏移的小画笔：世界坐标一律按设计尺寸写，2× 超采样只改 scale；
 // 偏移用于把一小块区域（农田层）单独烘到局部画布上，坐标不需要换算。
 class Painter {
@@ -799,6 +805,20 @@ void drawKoi(Painter& p, const FarmWorld& world, float camX, float camY) {
     }
 }
 
+// 栈道尽头的小灯：暖色一点，给池塘一个视觉落点。它是水面上的立体摆件，
+// 遮罩烘焙也单独调它，影子不会压在灯罩上。
+void drawDockLamp(Painter& p) {
+    p.line(static_cast<float>(kDockLampX), static_cast<float>(kDockY + kDockH - 46),
+           static_cast<float>(kDockLampX), static_cast<float>(kDockY - 10), kWoodDark,
+           4.0f);
+    p.ellipse(static_cast<float>(kDockLampX), static_cast<float>(kDockLampY), 7.5f, 8.5f,
+              Color(58, 42, 28), 18);
+    p.ellipse(static_cast<float>(kDockLampX), static_cast<float>(kDockLampY), 5.3f, 6.0f,
+              Color(250, 204, 90), 18);
+    p.ellipse(static_cast<float>(kDockLampX) - 1.5f, static_cast<float>(kDockLampY) - 2.5f,
+              1.8f, 2.2f, kCream, 10);
+}
+
 void drawDock(Painter& p) {
     p.rect(static_cast<float>(kDockX + 6), static_cast<float>(kDockY + 7),
            static_cast<float>(kDockW), static_cast<float>(kDockH), Color(30, 78, 96));
@@ -829,16 +849,7 @@ void drawDock(Painter& p) {
                   4.5f, kWood, 14);
     }
 
-    // 栈道尽头的小灯：暖色一点，给池塘一个视觉落点。
-    p.line(static_cast<float>(kDockLampX), static_cast<float>(kDockY + kDockH - 46),
-           static_cast<float>(kDockLampX), static_cast<float>(kDockY - 10), kWoodDark,
-           4.0f);
-    p.ellipse(static_cast<float>(kDockLampX), static_cast<float>(kDockLampY), 7.5f, 8.5f,
-              Color(58, 42, 28), 18);
-    p.ellipse(static_cast<float>(kDockLampX), static_cast<float>(kDockLampY), 5.3f, 6.0f,
-              Color(250, 204, 90), 18);
-    p.ellipse(static_cast<float>(kDockLampX) - 1.5f, static_cast<float>(kDockLampY) - 2.5f,
-              1.8f, 2.2f, kCream, 10);
+    drawDockLamp(p);
 }
 
 void drawPond(Painter& p) {
@@ -976,31 +987,6 @@ void drawMeadow(Painter& p) {
             drawGrassTuft(p, x + 7.0f, y + 3.0f, 0.9f, kGrassDeep);
         }
     }
-
-    const float bushes[][3] = {{150.0f, 760.0f, 1.0f},  {150.0f, 930.0f, 0.85f},
-                               {1390.0f, 770.0f, 1.0f}, {1390.0f, 940.0f, 0.9f},
-                               {330.0f, 1000.0f, 1.1f}, {620.0f, 1015.0f, 0.9f},
-                               {900.0f, 995.0f, 1.0f},  {1180.0f, 1010.0f, 0.95f},
-                               {760.0f, 120.0f, 1.0f},  {1090.0f, 140.0f, 0.85f},
-                               {1260.0f, 980.0f, 1.0f}, {480.0f, 150.0f, 0.8f}};
-    for (const auto& b : bushes) {
-        drawBush(p, b[0], b[1], b[2]);
-    }
-
-    // 农田右下侧一只木桶（纯装饰，不挡路）。
-    const float bx = 682.0f;
-    const float by = 598.0f;
-    p.ellipse(bx + 3.0f, by + 3.0f, 14.0f, 5.0f, kGrassDeep, 16);
-    const std::vector<FPoint> bucket = {{bx - 11.0f, by - 20.0f},
-                                        {bx + 11.0f, by - 20.0f},
-                                        {bx + 8.0f, by},
-                                        {bx - 8.0f, by}};
-    p.polygon(bucket, kWoodDark, kOutline, 1.5f);
-    p.ellipse(bx, by - 20.0f, 11.0f, 4.0f, kWood, 18);
-    p.arc(bx, by - 21.0f, 12.0f, 8.0f, 3.4f, 6.0f, kWoodLight, 1.5f, 12);
-
-    drawLampPost(p);
-    drawCabinExterior(p);
 }
 
 // 路灯：灯杆+灯头+暖色灯泡。夜里 bulb 的亮度靠 drawLampGlow 每帧叠光。
@@ -1088,6 +1074,35 @@ void drawCabinExterior(Painter& p) {
     }
 }
 
+// 立体摆件：灌木、木桶、路灯、小屋。它们会挡住影子，单独成一组便于生成
+// “影子不落在物件身上”的遮罩；绘制顺序与原 drawMeadow 末尾完全一致。
+void drawProps(Painter& p) {
+    const float bushes[][3] = {{150.0f, 760.0f, 1.0f},  {150.0f, 930.0f, 0.85f},
+                               {1390.0f, 770.0f, 1.0f}, {1390.0f, 940.0f, 0.9f},
+                               {330.0f, 1000.0f, 1.1f}, {620.0f, 1015.0f, 0.9f},
+                               {900.0f, 995.0f, 1.0f},  {1180.0f, 1010.0f, 0.95f},
+                               {760.0f, 120.0f, 1.0f},  {1090.0f, 140.0f, 0.85f},
+                               {1260.0f, 980.0f, 1.0f}, {480.0f, 150.0f, 0.8f}};
+    for (const auto& b : bushes) {
+        drawBush(p, b[0], b[1], b[2]);
+    }
+
+    // 农田右下侧一只木桶（纯装饰，不挡路）。
+    const float bx = 682.0f;
+    const float by = 598.0f;
+    p.ellipse(bx + 3.0f, by + 3.0f, 14.0f, 5.0f, kGrassDeep, 16);
+    const std::vector<FPoint> bucket = {{bx - 11.0f, by - 20.0f},
+                                        {bx + 11.0f, by - 20.0f},
+                                        {bx + 8.0f, by},
+                                        {bx - 8.0f, by}};
+    p.polygon(bucket, kWoodDark, kOutline, 1.5f);
+    p.ellipse(bx, by - 20.0f, 11.0f, 4.0f, kWood, 18);
+    p.arc(bx, by - 21.0f, 12.0f, 8.0f, 3.4f, 6.0f, kWoodLight, 1.5f, 12);
+
+    drawLampPost(p);
+    drawCabinExterior(p);
+}
+
 void drawTrees(Painter& p) {
     std::vector<TreeSpot> sorted(std::begin(kTrees), std::end(kTrees));
     std::sort(sorted.begin(), sorted.end(),
@@ -1125,6 +1140,7 @@ void drawScene(Painter& p, const FarmWorld& world) {
     drawFarm(p, world);
     drawPond(p);
     drawMeadow(p);
+    drawProps(p);
     drawTrees(p);
 }
 
@@ -1628,17 +1644,17 @@ void drawFishingHint(Painter& p, const FarmWorld& world, int viewW, int viewH) {
         s = "抛竿…";
         break;
     case FishState::Waiting:
-        s = "等鱼上钩…浮标一沉就点击！";
+        s = "钓鱼中……";
         break;
     case FishState::Biting:
-        s = "咬钩了！！快点击提竿！！";
+        s = "上钩了，点击左键！";
         urgent = true;
         break;
     case FishState::Caught:
         s = "钓到了！";
         break;
     case FishState::Missed:
-        s = "跑掉了…等浮标再沉再点";
+        s = "鱼跑掉了……";
         break;
     case FishState::Idle:
         return;
@@ -1948,18 +1964,26 @@ void drawOrderBoard(Painter& p, const FarmWorld& world, int viewW) {
 
 // ---------------- 昼夜光照：影子 / 环境色 / 灯光 ----------------
 
-constexpr Color kShadowTint{18, 22, 14};
+constexpr Color kShadowTint{18, 22, 14};       // 最终合成到画面上的影子色
+constexpr Color kShadowStamp{255, 255, 255};   // 影子蒙版里用的"强度色"，只在蒙版里读写
+constexpr Color kMaskKey{255, 0, 255};         // 立体物件遮罩烘焙用的色键
 
 // 路灯（点光源）的影子：沿背离灯的方向拉长的椭圆投影，和太阳影的椭圆同一套
 // 观感——近端落在根部、中段最宽、远端渐收。长度随物体高度和到灯距离变化，
 // 每帧重算。此前用四边形近似，近宽远窄的直边在夜里像一块梯形板。
+// 离灯太近时径向方向不可靠（灯下奇异），影子淡出，避免翻转时突变。
 // lampX/lampY 必须与 baseX/baseY 同一坐标系（视口坐标），否则镜头一动影子就偏。
 void lampShadowBlob(Painter& p, float baseX, float baseY, float lampX, float lampY,
                     float radius, float height, std::uint8_t alpha) {
     const float dx = baseX - lampX;
     const float dy = baseY - lampY;
     const float dist = std::sqrt(dx * dx + dy * dy);
-    if (dist < 24.0f) {
+    if (dist < 1.0f) {
+        return;
+    }
+    const std::uint8_t a = static_cast<std::uint8_t>(
+        static_cast<float>(alpha) * smoothStep(16.0f, 64.0f, dist));
+    if (a == 0) {
         return;
     }
     const float ux = dx / dist;
@@ -1980,10 +2004,10 @@ void lampShadowBlob(Painter& p, float baseX, float baseY, float lampX, float lam
         const float side = std::sin(a) * semiV;
         pts.push_back({cx + ux * fwd - uy * side, cy + uy * fwd + ux * side});
     }
-    p.polygon(pts, kShadowTint, kShadowTint, 0.0f, alpha);
+    p.polygon(pts, kShadowStamp, kShadowStamp, 0.0f, a);
 }
 
-// 胖龙的剪影影子：先把剪影以不透明色画进离屏蒙版，再以统一 alpha 盖到主画布。
+// 胖龙的剪影影子：先把剪影以不透明色画进局部蒙版，再以统一 alpha 盖进影子层。
 // 不能直接拿半透明形状往上叠——龙由 20 多个形状组成，肚皮、头身交界等重叠区
 // 会被多次 src-over 混合而明显更深，剪影发花；蒙版法保证影子浓度处处一致。
 // 盖章是真正的地面投影（以脚跟为锚的切变）：高度 h 的剪影点沿影子向量位移
@@ -2031,15 +2055,18 @@ void stampDragonShadow(Painter& p, FrameBuffer& mask, FPoint base, FPoint sv,
             if (fx < 0 || fx >= fb.width()) {
                 continue;
             }
-            fb.blendPixel(fx, fy, kShadowTint, alpha);
+            fb.blendPixel(fx, fy, kShadowStamp, alpha);
         }
     }
 }
 
-// 每帧把所有投影体的影子重画一遍：白天太阳方向光（晨昏拉长），夜里路灯点光，
-// 晨昏两套同时画、各自减淡。影子只叠在背景上，实体随后绘制。
-void drawShadows(Painter& p, const FarmWorld& world, float camX, float camY,
+// 每帧把所有投影体的影子画进一张离屏强度蒙版，再由 compositeShadows 一次性
+// 合成到画布：太阳方向光（晨昏拉长）与路灯点光（夜里）两套同时画、各自减淡。
+// 影子集中在蒙版里管理，重叠区域只混一次浓度，不会叠加发黑。
+void drawShadows(FrameBuffer& target, const FarmWorld& world, float camX, float camY,
                  const SkyState& sky, FrameBuffer& dragonMask) {
+    target.clear(Color::Black());
+    Painter p(target, 1.0f);
     const bool dual = sky.sunUp && sky.lampIntensity > 0.01f;
     const float ox = -camX;
     const float oy = -camY;
@@ -2076,7 +2103,7 @@ void drawShadows(Painter& p, const FarmWorld& world, float camX, float camY,
         const float h = 64.0f * t.scale;
         if (sunA > 0) {
             p.ellipse(x + sv.x * h, y + sv.y * h, 48.0f * t.scale, 15.0f * t.scale,
-                      kShadowTint, 26, sunA);
+                      kShadowStamp, 26, sunA);
         }
         if (lampA > 0) {
             lampShadowBlob(p, x, y, lampVX, lampVY, 34.0f * t.scale, h, lampA);
@@ -2091,7 +2118,7 @@ void drawShadows(Painter& p, const FarmWorld& world, float camX, float camY,
         }
         const float h = 26.0f * b[2];
         if (sunA > 0) {
-            p.ellipse(x + sv.x * h, y + sv.y * h, 20.0f * b[2], 7.0f * b[2], kShadowTint,
+            p.ellipse(x + sv.x * h, y + sv.y * h, 20.0f * b[2], 7.0f * b[2], kShadowStamp,
                       20, sunA);
         }
         if (lampA > 0) {
@@ -2109,7 +2136,7 @@ void drawShadows(Painter& p, const FarmWorld& world, float camX, float camY,
         const float y = pc.y + 26.0f + oy;
         const float h = c.stage == CropStage::Mature ? 34.0f : 18.0f;
         if (sunA > 0) {
-            p.ellipse(x + sv.x * h, y + sv.y * h, 17.0f, 5.5f, kShadowTint, 18, sunA);
+            p.ellipse(x + sv.x * h, y + sv.y * h, 17.0f, 5.5f, kShadowStamp, 18, sunA);
         }
         if (lampA > 0) {
             lampShadowBlob(p, x, y, lampVX, lampVY, 12.0f, h, lampA);
@@ -2120,7 +2147,7 @@ void drawShadows(Painter& p, const FarmWorld& world, float camX, float camY,
         const float x = 682.0f + ox;
         const float y = 598.0f + oy;
         if (sunA > 0) {
-            p.ellipse(x + sv.x * 20.0f, y + sv.y * 20.0f, 13.0f, 4.5f, kShadowTint, 16,
+            p.ellipse(x + sv.x * 20.0f, y + sv.y * 20.0f, 13.0f, 4.5f, kShadowStamp, 16,
                       sunA);
         }
         if (lampA > 0) {
@@ -2139,16 +2166,56 @@ void drawShadows(Painter& p, const FarmWorld& world, float camX, float camY,
             const float dx = base.x - lampVX;
             const float dy = base.y - lampVY;
             const float dist = std::sqrt(dx * dx + dy * dy);
-            if (dist >= 24.0f) {
-                // 高度 h 的点向背离灯的方向位移 h·k（k 与灯影四边形同一生长率）。
-                // 垂直分量接近 0 时投影会在屏幕上压成一条线，钳个下限保住形状。
-                const float k = 0.9f + dist * 0.0035f;
-                FPoint lv{(dx / dist) * k, (dy / dist) * k};
-                if (std::fabs(lv.y) < 0.35f) {
-                    lv.y = lv.y < 0.0f ? -0.35f : 0.35f;
+            if (dist > 1.0f) {
+                const float ux = dx / dist;
+                const float uy = dy / dist;
+                // 两个退化方向都淡出：离灯太近时径向方向奇异；影子方向接近水平
+                // 时剪影会被压成一条线。角色从灯上方走到下方恰好经过这两处，
+                // 淡出再淡入让影子自然收没、反向展开，而不是瞬间翻转。
+                const float fade = smoothStep(16.0f, 64.0f, dist) *
+                                   smoothStep(0.08f, 0.35f, std::fabs(uy));
+                const float a = static_cast<float>(lampA) * fade;
+                if (a >= 1.0f) {
+                    const float k = 0.9f + dist * 0.0035f;
+                    float sy = uy;
+                    if (std::fabs(sy) < 0.10f) {
+                        sy = sy < 0.0f ? -0.10f : 0.10f; // 仅防除零，此时已接近全透明
+                    }
+                    stampDragonShadow(p, dragonMask, base, {ux * k, sy * k},
+                                      static_cast<std::uint8_t>(a), world.facing());
                 }
-                stampDragonShadow(p, dragonMask, base, lv, lampA, world.facing());
             }
+        }
+    }
+}
+
+// 影子蒙版合成：把离屏强度蒙版一次性染成 kShadowTint 盖到画布上。静态立体
+// 物件（树/灌木/木桶/路灯/小屋）覆盖的像素跳过，影子永远不会压在自己的树冠、
+// 桶身或墙面上——影子层始终在立体物件之下。
+void compositeShadows(FrameBuffer& fb, const FrameBuffer& shadow,
+                      const std::vector<std::uint8_t>& propMask, int camX, int camY) {
+    if (propMask.size() != static_cast<std::size_t>(kWorldW) * kWorldH) {
+        return;
+    }
+    for (int y = 0; y < shadow.height() && y < fb.height(); ++y) {
+        const int wy = camY + y;
+        if (wy < 0 || wy >= kWorldH) {
+            continue;
+        }
+        const std::size_t row = static_cast<std::size_t>(wy) * kWorldW;
+        for (int x = 0; x < shadow.width() && x < fb.width(); ++x) {
+            const std::uint8_t a = shadow.pixel(x, y).r;
+            if (a == 0) {
+                continue;
+            }
+            const int wx = camX + x;
+            if (wx < 0 || wx >= kWorldW) {
+                continue;
+            }
+            if (propMask[row + static_cast<std::size_t>(wx)] != 0) {
+                continue;
+            }
+            fb.blendPixel(x, y, kShadowTint, a);
         }
     }
 }
@@ -2543,6 +2610,27 @@ void downsample2x(const FrameBuffer& src, FrameBuffer& dst) {
     }
 }
 
+// 色键画布 → 1× 覆盖度遮罩：每个 2×2 块里非键色子像素的比例（0..255）。
+// 用于生成"立体物件遮罩"——影子合成时跳过这些像素，影子就压不到树冠上。
+void downsampleMask(const FrameBuffer& src, const Color& key, std::uint8_t* dst, int dstW,
+                    int dstX, int dstY, int w, int h) {
+    for (int y = 0; y < h; ++y) {
+        for (int x = 0; x < w; ++x) {
+            int covered = 0;
+            for (int sy = 0; sy < 2; ++sy) {
+                for (int sx = 0; sx < 2; ++sx) {
+                    if (src.pixel(x * 2 + sx, y * 2 + sy) != key) {
+                        ++covered;
+                    }
+                }
+            }
+            dst[static_cast<std::size_t>(dstY + y) * static_cast<std::size_t>(dstW) +
+                static_cast<std::size_t>(dstX + x)] =
+                static_cast<std::uint8_t>(covered * 255 / 4);
+        }
+    }
+}
+
 // 窗户玻璃的天色：白天淡蓝、夜里深蓝，晨昏透一点暖——屋里也能看出外面的时段。
 void drawWindowSky(Painter& p, const FarmWorld& world, float camX, float camY) {
     AmbientTint blue;
@@ -2568,7 +2656,7 @@ void drawWindowSky(Painter& p, const FarmWorld& world, float camX, float camY) {
 
 FarmRender::FarmRender()
     : background_(kWorldW, kWorldH), cabinBackground_(1, 1), farmLayer_(1, 1),
-      dragonMask_(1, 1) {}
+      shadowMask_(1, 1), dragonMask_(1, 1) {}
 
 void FarmRender::build(const FarmWorld& world) {
     // 静态层：草地/土路/池塘/花草/树木/小屋外观，一次烘成。
@@ -2578,8 +2666,21 @@ void FarmRender::build(const FarmWorld& world) {
     drawPath(p);
     drawPond(p);
     drawMeadow(p);
+    drawProps(p);
     drawTrees(p);
     downsample2x(hi, background_);
+
+    // 立体物件遮罩：把树/灌木/木桶/路灯/小屋/桥头灯单独画到色键画布上，
+    // 降采样成 1× 覆盖度。影子合成时跳过被遮的像素，影子就永远压在
+    // 树冠、桶身、墙面之下，而不是浮在它们上面。
+    // 复用刚才的背景 2× 画布，省一块 28MB 的临时缓冲。
+    hi.clear(kMaskKey);
+    Painter mp(hi, 2.0f);
+    drawProps(mp);
+    drawTrees(mp);
+    drawDockLamp(mp);
+    propMask_.assign(static_cast<std::size_t>(kWorldW) * kWorldH, 0);
+    downsampleMask(hi, kMaskKey, propMask_.data(), kWorldW, 0, 0, kWorldW, kWorldH);
 
     // 室内：整间房一次烘成（窗户玻璃天色每帧另画）。
     FrameBuffer chi(kRoomW * 2, kRoomH * 2);
@@ -2646,11 +2747,20 @@ void FarmRender::frame(FrameBuffer& fb, const FarmWorld& world, bool hud) {
         fb.copyRectFrom(background_, kDockLampX - 8, kDockLampY - 10, 16,
                         kDockY - (kDockLampY - 10), kDockLampX - 8 - camX,
                         kDockLampY - 10 - camY);
+
+        // 影子层：所有投影先画进离屏蒙版，再一次性合成到背景上。合成时跳过
+        // 立体物件遮罩覆盖的像素，影子就压不到树冠、桶身、墙面上；随后画的
+        // 实体（角色/鱼漂/粒子）也自然盖在影子之上。
+        if (shadowMask_.width() != fb.width() || shadowMask_.height() != fb.height()) {
+            shadowMask_.resize(fb.width(), fb.height());
+        }
+        drawShadows(shadowMask_, world, static_cast<float>(camX), static_cast<float>(camY),
+                    sky, dragonMask_);
+        compositeShadows(fb, shadowMask_, propMask_, camX, camY);
+
+        // 炊烟比地面高，画在影子之后。
         drawChimneySmoke(p, world, static_cast<float>(camX), static_cast<float>(camY));
 
-        // 影子最先画（贴着背景），晨昏时太阳与路灯两套影子同时出现。
-        drawShadows(p, world, static_cast<float>(camX), static_cast<float>(camY), sky,
-                    dragonMask_);
         drawHover(p, world.hover(), static_cast<float>(camX), static_cast<float>(camY),
                   world.animTime());
         drawFishing(p, world, static_cast<float>(camX), static_cast<float>(camY));
@@ -2727,6 +2837,7 @@ std::vector<FrameBuffer> FarmRender::captureLayers(const FarmWorld& world) const
     drawPond(p);
     snapshot();
     drawMeadow(p);
+    drawProps(p);
     snapshot();
     drawTrees(p);
     snapshot();
