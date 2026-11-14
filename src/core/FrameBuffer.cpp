@@ -2,7 +2,6 @@
 #include "core/FrameBuffer.hpp"
 
 #include <algorithm>
-#include <cmath>
 #include <cstring>
 
 namespace cg {
@@ -203,9 +202,7 @@ void FrameBuffer::copySpanFrom(const FrameBuffer& src, int y, int x0, int x1) {
                 static_cast<std::size_t>(xb - xa + 1) * sizeof(std::uint32_t));
 }
 
-// 缩放拷贝：整数倍放大与缩小走最近邻；非整数倍放大按课件第 4 章的加权区域采样：
-// 每个目标像素均分 3×3 子像素，查 n=9 加权表（1/16 · [1 2 1; 2 4 2; 1 2 1]），
-// 子像素中心落在哪个源像素就把对应权重累加到它。表可分离，最终等价 4 邻域乘加。
+// 最近邻采样 dst(x,y) = src(x*srcW/dstW, y*srcH/dstH)；列映射预计算一次，行内无除法。
 void FrameBuffer::blitScaledFrom(const FrameBuffer& src) {
     if (width_ <= 0 || height_ <= 0 || src.width_ <= 0 || src.height_ <= 0) {
         return;
@@ -214,127 +211,16 @@ void FrameBuffer::blitScaledFrom(const FrameBuffer& src) {
         copyFrom(src);
         return;
     }
-
-    const float ratioX = static_cast<float>(src.width_) / static_cast<float>(width_);
-    const float ratioY = static_cast<float>(src.height_) / static_cast<float>(height_);
-    const bool magnify = width_ >= src.width_ && height_ >= src.height_;
-    const bool integerScale =
-        (width_ % src.width_ == 0) && (height_ % src.height_ == 0);
-    const bool weighted = magnify && !integerScale;
-
-    if (!weighted) {
-        std::vector<int> xmap(static_cast<std::size_t>(width_));
-        for (int x = 0; x < width_; ++x) {
-            xmap[static_cast<std::size_t>(x)] = x * src.width_ / width_;
-        }
-        for (int y = 0; y < height_; ++y) {
-            const int sy = y * src.height_ / height_;
-            const std::uint32_t* srcRow = src.pixels_.data() + rowOffset(src.width_, sy);
-            std::uint32_t* dstRow = pixels_.data() + rowOffset(width_, y);
-            for (int x = 0; x < width_; ++x) {
-                dstRow[x] = srcRow[xmap[static_cast<std::size_t>(x)]];
-            }
-        }
-        return;
-    }
-
-    // n=9 加权表每行权重为 1:2:1（中心子像素权重 4）。列/行各算一次：
-    // 3 个子像素中心映射到源像素，最多落到相邻两个源像素上，权重相加。
-    const int subWeight[3] = {1, 2, 1};
-    std::vector<int> x0(static_cast<std::size_t>(width_));
-    std::vector<int> x1(static_cast<std::size_t>(width_));
-    std::vector<int> wx0(static_cast<std::size_t>(width_));
-    std::vector<int> wx1(static_cast<std::size_t>(width_));
+    std::vector<int> xmap(static_cast<std::size_t>(width_));
     for (int x = 0; x < width_; ++x) {
-        int first = -1;
-        int second = -1;
-        int wFirst = 0;
-        int wSecond = 0;
-        for (int s = 0; s < 3; ++s) {
-            const float pos =
-                (static_cast<float>(x) + (static_cast<float>(s) + 0.5f) / 3.0f) * ratioX -
-                0.5f;
-            const int ix = std::clamp(static_cast<int>(std::floor(pos + 0.5f)), 0,
-                                      src.width_ - 1);
-            if (ix == first) {
-                wFirst += subWeight[s];
-            } else if (ix == second) {
-                wSecond += subWeight[s];
-            } else if (first < 0) {
-                first = ix;
-                wFirst = subWeight[s];
-            } else {
-                second = ix;
-                wSecond = subWeight[s];
-            }
-        }
-        const std::size_t xi = static_cast<std::size_t>(x);
-        x0[xi] = first;
-        x1[xi] = second < 0 ? first : second;
-        wx0[xi] = wFirst;
-        wx1[xi] = wSecond;
+        xmap[static_cast<std::size_t>(x)] = x * src.width_ / width_;
     }
-
     for (int y = 0; y < height_; ++y) {
-        int y0i = -1;
-        int y1i = -1;
-        int wy0 = 0;
-        int wy1 = 0;
-        for (int s = 0; s < 3; ++s) {
-            const float pos =
-                (static_cast<float>(y) + (static_cast<float>(s) + 0.5f) / 3.0f) * ratioY -
-                0.5f;
-            const int iy = std::clamp(static_cast<int>(std::floor(pos + 0.5f)), 0,
-                                      src.height_ - 1);
-            if (iy == y0i) {
-                wy0 += subWeight[s];
-            } else if (iy == y1i) {
-                wy1 += subWeight[s];
-            } else if (y0i < 0) {
-                y0i = iy;
-                wy0 = subWeight[s];
-            } else {
-                y1i = iy;
-                wy1 = subWeight[s];
-            }
-        }
-        if (y1i < 0) {
-            y1i = y0i;
-            wy1 = 0;
-        }
-
-        const std::uint32_t* row0 = src.pixels_.data() + rowOffset(src.width_, y0i);
-        const std::uint32_t* row1 = src.pixels_.data() + rowOffset(src.width_, y1i);
+        const int sy = y * src.height_ / height_;
+        const std::uint32_t* srcRow = src.pixels_.data() + rowOffset(src.width_, sy);
         std::uint32_t* dstRow = pixels_.data() + rowOffset(width_, y);
-
         for (int x = 0; x < width_; ++x) {
-            const std::size_t xi = static_cast<std::size_t>(x);
-            const int w00 = wx0[xi] * wy0;
-            const int w10 = wx1[xi] * wy0;
-            const int w01 = wx0[xi] * wy1;
-            const int w11 = wx1[xi] * wy1; // 四权重和恒为 16
-
-            const std::uint32_t c00 = row0[x0[xi]];
-            const std::uint32_t c10 = row0[x1[xi]];
-            const std::uint32_t c01 = row1[x0[xi]];
-            const std::uint32_t c11 = row1[x1[xi]];
-
-            const int r = (static_cast<int>(c00 & 0xFFu) * w00 +
-                           static_cast<int>(c10 & 0xFFu) * w10 +
-                           static_cast<int>(c01 & 0xFFu) * w01 +
-                           static_cast<int>(c11 & 0xFFu) * w11 + 8) >> 4;
-            const int g = (static_cast<int>((c00 >> 8) & 0xFFu) * w00 +
-                           static_cast<int>((c10 >> 8) & 0xFFu) * w10 +
-                           static_cast<int>((c01 >> 8) & 0xFFu) * w01 +
-                           static_cast<int>((c11 >> 8) & 0xFFu) * w11 + 8) >> 4;
-            const int b = (static_cast<int>((c00 >> 16) & 0xFFu) * w00 +
-                           static_cast<int>((c10 >> 16) & 0xFFu) * w10 +
-                           static_cast<int>((c01 >> 16) & 0xFFu) * w01 +
-                           static_cast<int>((c11 >> 16) & 0xFFu) * w11 + 8) >> 4;
-
-            dstRow[x] = static_cast<std::uint32_t>(r) |
-                        (static_cast<std::uint32_t>(g) << 8) |
-                        (static_cast<std::uint32_t>(b) << 16) | (0xFFu << 24);
+            dstRow[x] = srcRow[xmap[static_cast<std::size_t>(x)]];
         }
     }
 }

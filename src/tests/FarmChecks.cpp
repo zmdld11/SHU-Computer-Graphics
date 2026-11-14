@@ -398,14 +398,6 @@ int runFarmChecks() {
         expect(up.pixel(0, 0) == Color(255, 0, 0) && up.pixel(3, 3) == Color(255, 255, 0),
                "view: 放大 blit 角点颜色不变");
         expect(up.pixel(2, 2) == src.pixel(1, 1), "view: 放大 blit 采样正确");
-        // 非整数倍（2x2 → 3x3）走加权区域采样：中心按 1:2:1 加权表混合四色
-        FrameBuffer up3(3, 3);
-        up3.blitScaledFrom(src);
-        const Color corner = up3.pixel(2, 2);
-        expect(up3.pixel(0, 0) == Color(255, 0, 0), "view: 加权放大左上角保持");
-        expect(corner.r > 200 && corner.g > 200 && corner.b < 40,
-               "view: 加权放大右下角接近黄色");
-        expect(up3.pixel(1, 1) == Color(159, 191, 48), "view: 加权放大中心按 1:2:1 表混合");
         FrameBuffer down(2, 2);
         down.blitScaledFrom(up);
         expect(down.pixel(0, 0) == Color(255, 0, 0) && down.pixel(1, 1) == Color(255, 255, 0),

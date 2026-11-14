@@ -117,7 +117,7 @@ public:
     void copyRectFrom(const FrameBuffer& src, int srcX, int srcY, int w, int h,
                       int dstX, int dstY);
 
-    // 整幅缩放拷贝：整数倍放大与缩小走最近邻，非整数倍放大走双线性（反走样）。
+    // 最近邻整幅缩放拷贝：把 src 铺满本画布（游戏放大视口用）。
     void blitScaledFrom(const FrameBuffer& src);
 
     // RGBA 行主序数据，供 Canvas 上屏
