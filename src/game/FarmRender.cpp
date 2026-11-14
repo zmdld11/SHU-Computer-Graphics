@@ -702,9 +702,11 @@ void drawLilyPad(Painter& p, float x, float y, float r, const Color& water, bool
 
 // 荷叶是浮在水面的实体：不能烘进静态背景，否则每帧的锦鲤和水纹会盖在它上面。
 // 每帧画在鱼与水纹之后、栈道盖回之前，再由影子层统一压暗。
-void drawLilyPads(Painter& p) {
-    const float cx = kPondCx;
-    const float cy = kPondCy;
+// 传入相机偏移：荷叶长在池塘的固定世界坐标上，要跟着镜头一起滚动，
+// 否则会像贴在屏幕上的贴纸（相机一平移就露馅）。
+void drawLilyPads(Painter& p, float camX, float camY) {
+    const float cx = kPondCx - camX;
+    const float cy = kPondCy - camY;
     drawLilyPad(p, cx - 86.0f, cy - 46.0f, 15.0f, kWaterMid, false);
     drawLilyPad(p, cx + 52.0f, cy - 92.0f, 13.0f, kWaterLight, false);
     drawLilyPad(p, cx + 112.0f, cy - 48.0f, 14.0f, kWaterLight, true);
@@ -2746,7 +2748,7 @@ void FarmRender::frame(FrameBuffer& fb, const FarmWorld& world, bool hud) {
         drawPondShimmer(p, world, static_cast<float>(camX), static_cast<float>(camY));
         drawWaterGlint(p, world, static_cast<float>(camX), static_cast<float>(camY));
         // 荷叶浮在水面：压在锦鲤与水纹之上，再由下面的栈道盖回桥面。
-        drawLilyPads(p);
+        drawLilyPads(p, static_cast<float>(camX), static_cast<float>(camY));
         // 栈道是水面之上的实体：鱼和水纹画完后，把烘焙背景里的桥面按相机
         // 位置原样盖回来——锦鲤从桥下游过时被桥板挡住，而不是浮在桥面上。
         fb.copyRectFrom(background_, kDockX, kDockY, kDockW, kDockH, kDockX - camX,
@@ -2805,7 +2807,7 @@ FrameBuffer FarmRender::captureWorld(const FarmWorld& world) const {
     drawScene(p, world);
     drawChimneySmoke(p, world, 0.0f, 0.0f); // 整图导出也带上固定相位的炊烟
     drawKoi(p, world, 0.0f, 0.0f); // 整图导出也带上锦鲤（固定相位）
-    drawLilyPads(p);               // 荷叶压在鱼上，与运行时同序
+    drawLilyPads(p, 0.0f, 0.0f);   // 荷叶压在鱼上，与运行时同序
     drawDock(p);                   // 桥面盖回鱼上，和运行时图层一致
     drawDragon(p, world.playerPos(), false, 0.0f, 0.0f, world.facing());
     FrameBuffer out(kWorldW, kWorldH);
