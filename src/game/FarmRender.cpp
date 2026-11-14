@@ -1043,12 +1043,9 @@ void drawCabinExterior(Painter& p) {
                                            {x + w * 0.5f, y - 6.0f}};
     p.polygon(roofFront, Color(184, 92, 62), kOutline, 2.0f);
 
-    // 烟囱 + 炊烟
+    // 烟囱：只画管体与顶盖；炊烟由 drawChimneySmoke 每帧实时绘制，不烘进背景。
     p.rect(x + w - 74.0f, y - 18.0f, 26.0f, 58.0f, kStoneDark);
     p.rect(x + w - 77.0f, y - 22.0f, 32.0f, 8.0f, kStone);
-    p.ellipse(x + w - 61.0f, y - 34.0f, 9.0f, 6.0f, Color(226, 226, 218), 14);
-    p.ellipse(x + w - 54.0f, y - 52.0f, 12.0f, 8.0f, Color(236, 236, 228), 14);
-    p.ellipse(x + w - 44.0f, y - 74.0f, 15.0f, 10.0f, Color(244, 244, 238), 14);
 
     // 门：圆头木门 + 把手，门前一块石板。
     const float dx = kCabinDoorX;
@@ -1879,9 +1876,11 @@ void drawChimneySmoke(Painter& p, const FarmWorld& world, float camX, float camY
                                   1.0f);
         const float x = topX + t * 20.0f - camX;
         const float y = topY - t * 52.0f - camY;
-        const float r = 5.0f + t * 10.0f;
-        const std::uint8_t a = static_cast<std::uint8_t>((1.0f - t) * 80.0f);
-        p.ellipse(x, y, r, r * 0.8f, Color(236, 236, 228), 14, a);
+        const float r = 5.5f + t * 10.0f;
+        // 前一半行程保持接近实心，避免地面树影从烟里透出硬边；升高后再线性淡出。
+        const float fade = std::clamp(1.0f - (t - 0.5f) / 0.5f, 0.0f, 1.0f);
+        const std::uint8_t a = static_cast<std::uint8_t>(fade * 235.0f);
+        p.ellipse(x, y, r, r * 0.8f, Color(238, 238, 232), 14, a);
     }
 }
 
@@ -2795,6 +2794,7 @@ FrameBuffer FarmRender::captureWorld(const FarmWorld& world) const {
     FrameBuffer hi(kWorldW * 2, kWorldH * 2);
     Painter p(hi, 2.0f);
     drawScene(p, world);
+    drawChimneySmoke(p, world, 0.0f, 0.0f); // 整图导出也带上固定相位的炊烟
     drawKoi(p, world, 0.0f, 0.0f); // 整图导出也带上锦鲤（固定相位）
     drawDock(p);                   // 桥面盖回鱼上，和运行时图层一致
     drawDragon(p, world.playerPos(), false, 0.0f, 0.0f, world.facing());
